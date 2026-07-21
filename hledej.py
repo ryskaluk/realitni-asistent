@@ -292,56 +292,25 @@ def _sreality_session():
     return s
 
 
-def _sreality_lokalita_params(session):
-    """
-    Zjistí parametry pro omezení dotazu na region (okres) — buď z ručního
-    nastavení, nebo přes našeptávač Sreality. Vrací dict, který se přidá
-    do dotazu na inzeráty (např. {'locality_district_id': 72}).
-    """
-    if SREALITY_LOCALITY_TYPE and SREALITY_LOCALITY_ID:
-        p = {f"locality_{SREALITY_LOCALITY_TYPE}_id": SREALITY_LOCALITY_ID}
-        print(f"  Sreality: lokalita ručně = {p}")
-        return p
-    try:
-        r = session.get("https://www.sreality.cz/api/cs/v2/suggest",
-                        params={"phrase": SREALITY_OKRES_FRAZE, "count": 15},
-                        timeout=30)
-        r.raise_for_status()
-        data = r.json()
-        results = (data.get("results")
-                   or (data.get("_embedded", {}) or {}).get("results")
-                   or data.get("items") or [])
-        best, first = None, None
-        for it in results:
-            s = it.get("settings") or it.get("userData") or it.get("data") or {}
-            typ, val = s.get("type"), s.get("value")
-            if not (typ and val):
-                continue
-            if first is None:
-                first = (typ, val)
-            if typ == "district":          # okres = ideální šíře záběru
-                best = (typ, val)
-                break
-        chosen = best or first
-        if chosen:
-            p = {f"locality_{chosen[0]}_id": chosen[1]}
-            print(f"  Sreality: našeptávač našel lokalitu = {p} "
-                  f"(fráze '{SREALITY_OKRES_FRAZE}')")
-            return p
-        print("  ! Sreality: našeptávač nevrátil použitelný region — "
-              "hledám bez omezení lokality (může vrátit málo výsledků).")
-    except Exception as e:
-        print(f"  ! Sreality: našeptávač selhal ({e}) — hledám bez omezení.")
-    return {}
+def _bbox_z_obci():
+    """Spočítá GPS ohraničení (bounding box) kolem obcí + radius, aby Sreality
+    API vrátilo jen inzeráty z oblasti. Přesné doladění na radius pak dělá
+    filtr přes vzdálenost od obcí."""
+    lats = [o["lat"] for o in OBCE]
+    lons = [o["lon"] for o in OBCE]
+    stred_lat = sum(lats) / len(lats)
+    m_lat = RADIUS_KM / 111.0
+    m_lon = RADIUS_KM / (111.0 * max(0.2, math.cos(math.radians(stred_lat))))
+    return (min(lats) - m_lat, max(lats) + m_lat, min(lons) - m_lon, max(lons) + m_lon)
 
 
 def zdroj_sreality():
     if requests is None:
         print("  ! requests není nainstalováno — Sreality přeskočeno.")
         return []
-    API = "https://www.sreality.cz/api/cs/v2/estates"
+    API = "https://www.sreality.cz/api/v1/estates/search"   # nové API (2024+)
     session = _sreality_session()
-    lok_params = _sreality_lokalita_params(session)
+    lat_min, lat_max, lon_min, lon_max = _bbox_z_obci()
     # category_main_cb: 2 = dům, 3 = pozemek; category_type_cb: 1 = prodej
     kategorie = [("Dům", 2, MAX_CENA_DUM), ("Pozemek", 3, MAX_CENA_POZEMEK)]
     out = []
@@ -349,13 +318,13 @@ def zdroj_sreality():
         pocet_kat = 0
         for page in range(1, MAX_STRANEK + 1):
             params = {
-                "category_main_cb": cmc, "category_type_cb": 1,
-                "per_page": PER_PAGE, "page": page, "tms": int(time.time() * 1000),
+                "category_type_cb": 1, "category_main_cb": cmc,
+                "locality_country_id": 112, "lang": "cs",
+                "per_page": 100, "page": page,
+                "lat_min": lat_min, "lat_max": lat_max,
+                "lon_min": lon_min, "lon_max": lon_max,
             }
-            params.update(lok_params)  # omezení na region (okres)
-            # Kvalitativní kritéria řešíme rovnou na serveru Sreality.
-            if cmc == 3 and POZEMEK_JEN_STAVEBNI:
-                params["category_sub_cb"] = SREALITY_POZEMEK_STAVEBNI_SUB
+            # Stav objektu řeší rovnou server (jen u domů).
             if cmc == 2 and DUM_JEN_DOBRY_STAV and SREALITY_DUM_STAV_KODY:
                 params["building_condition"] = SREALITY_DUM_STAV_KODY  # opakuje se v URL
             try:
@@ -365,41 +334,50 @@ def zdroj_sreality():
             except Exception as e:
                 print(f"  ! Sreality chyba ({kat_nazev}, str.{page}): {e}")
                 break
+            results = data.get("results") or []
             if page == 1 and VERBOSE:
-                print(f"  Sreality {kat_nazev}: server hlásí result_size="
-                      f"{data.get('result_size')} (URL: {r.url})")
-            estates = (data.get("_embedded", {}) or {}).get("estates", []) or []
-            if not estates:
+                total = (data.get("pagination") or {}).get("total")
+                print(f"  Sreality {kat_nazev}: v oblasti celkem {total} (stahuji po 100)")
+            if not results:
                 break
-            pocet_kat += len(estates)
-            for e in estates:
-                gps = e.get("gps", {}) or {}
-                links = e.get("_links", {}) or {}
-                imgs = links.get("images") or []
+            for e in results:
+                loc = e.get("locality") or {}
+                imgs = e.get("advert_images") or []
                 img = ""
-                if imgs and isinstance(imgs[0], dict):
-                    img = imgs[0].get("href", "")
+                if imgs:
+                    first = imgs[0]
+                    img = first.get("href", "") if isinstance(first, dict) else str(first)
+                    if img.startswith("//"):
+                        img = "https:" + img
                 hash_id = e.get("hash_id")
-                seo = (e.get("seo", {}) or {}).get("locality", "")
-                url = (f"https://www.sreality.cz/detail/prodej/dum/rodinny/{seo}/{hash_id}"
+                typ = "dum" if cmc == 2 else "pozemek"
+                sub = (e.get("category_sub_cb") or {}).get("name", "") if isinstance(e.get("category_sub_cb"), dict) else ""
+                sub_seo = _bez_diakritiky(sub).replace(" ", "-") or "x"
+                city_seo = loc.get("city_seo_name") or "x"
+                url = (f"https://www.sreality.cz/detail/prodej/{typ}/{sub_seo}/{city_seo}/{hash_id}"
                        if hash_id else "https://www.sreality.cz/")
+                lok_txt = ", ".join(x for x in [loc.get("city"), loc.get("citypart"),
+                                                loc.get("district")] if x)
                 out.append({
                     "id": f"sreality-{hash_id}",
                     "zdroj": "Sreality",
                     "kategorie": kat_nazev,
-                    "nazev": e.get("name", "") or "",
-                    "lokalita": e.get("locality", "") or "",
-                    "cena": e.get("price", 0) or 0,
+                    "nazev": e.get("advert_name", "") or "",
+                    "lokalita": lok_txt,
+                    "cena": e.get("price_czk", 0) or 0,
                     "max_cena": _max,
-                    "lat": gps.get("lat"), "lon": gps.get("lon"),
+                    "lat": loc.get("gps_lat"), "lon": loc.get("gps_lon"),
                     "url": url, "obrazek": img,
-                    "_server_filtered": True,  # kritéria už vyřešilo Sreality API
+                    # Domy: stav vyřešil server. Pozemky: "stavební" dořeší textový filtr.
+                    "_server_filtered": (cmc == 2),
                 })
-            if data.get("result_size") and page * PER_PAGE >= data["result_size"]:
+                pocet_kat += 1
+            total = (data.get("pagination") or {}).get("total")
+            if total and page * 100 >= total:
                 break
             time.sleep(0.4)
         if VERBOSE:
-            print(f"  Sreality {kat_nazev}: staženo {pocet_kat} inzerátů (před filtrem lokality)")
+            print(f"  Sreality {kat_nazev}: staženo {pocet_kat} inzerátů (v oblasti)")
     return out
 
 
