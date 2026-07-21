@@ -29,6 +29,7 @@ import html
 import json
 import math
 import os
+import re
 import time
 import unicodedata
 
@@ -78,6 +79,13 @@ OBCE_TEXTOVE = [
     "Vyšní Lhoty", "Nižní Lhoty", "Dobrá", "Dobratice", "Nošovice",
     "Vojkovice", "Horní Tošanovice", "Dolní Tošanovice", "Třanovice",
     "Lučina", "Soběšovice", "Žermanice", "Pazderna", "Pržno", "Čeladná",
+]
+
+# Vyloučené lokality — inzeráty z těchto měst/obcí se zahodí (na všech zdrojích).
+# Porovnává se na celá slova, takže "Ostrava" nevyřadí "Ostravice".
+LOKALITA_VYLOUCIT = [
+    "Karviná", "Havířov", "Orlová", "Bohumín", "Ostrava",
+    "Český Těšín", "Třinec",
 ]
 
 # Cenové stropy (Kč).
@@ -169,6 +177,16 @@ def _bez_diakritiky(s):
 
 
 OBCE_TEXTOVE_NORM = [_bez_diakritiky(o) for o in OBCE_TEXTOVE]
+VYLOUCIT_NORM = [_bez_diakritiky(o) for o in LOKALITA_VYLOUCIT]
+
+
+def je_vyloucena_lokalita(text):
+    """True, pokud text lokality obsahuje některé z vyloučených měst (na celá slova)."""
+    t = _bez_diakritiky(text)
+    for v in VYLOUCIT_NORM:
+        if v and re.search(r"\b" + re.escape(v) + r"\b", t):
+            return True
+    return False
 
 
 def vzdalenost_km(lat1, lon1, lat2, lon2):
@@ -198,6 +216,10 @@ def lokalita_vyhovuje(item):
     - Pokud nemá GPS: textová shoda názvu obce v poli 'lokalita'.
     Vrací (bool, nejblizsi_obec, vzdalenost_km_nebo_None).
     """
+    # Vyloučené lokality (Karviná apod.) — platí vždy, i pro server-filtrované zdroje.
+    if je_vyloucena_lokalita(item.get("lokalita", "")):
+        return False, None, None
+
     # Zdroj už omezil lokalitu na serveru (např. Bazoš přes PSČ+okruh).
     if item.get("_lokalita_ok"):
         return True, None, None
