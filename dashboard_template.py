@@ -100,7 +100,7 @@ HTML_SABLONA = r"""<!DOCTYPE html>
 </footer>
 
 <script>
-const DATA = [/*__DATA__*/];
+const DATA = /*__DATA__*/;
 
 const grid = document.getElementById('grid');
 const empty = document.getElementById('empty');
