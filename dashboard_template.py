@@ -1,0 +1,174 @@
+# -*- coding: utf-8 -*-
+"""HTML šablona dashboardu. Data se vloží místo /*__DATA__*/."""
+
+HTML_SABLONA = r"""<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Realitní asistent — domy a pozemky</title>
+<style>
+  :root{
+    --bg:#0f1720; --panel:#17212b; --panel2:#1e2b38; --line:#2b3a4a;
+    --text:#e6edf3; --muted:#8fa3b8; --accent:#4aa8ff; --new:#2ecc71;
+    --dum:#4aa8ff; --pozemek:#f1c40f;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+       background:var(--bg);color:var(--text);}
+  header{padding:22px 26px;border-bottom:1px solid var(--line);
+         background:linear-gradient(180deg,#17212b,#0f1720);}
+  h1{margin:0 0 6px;font-size:22px}
+  .meta{color:var(--muted);font-size:13px;line-height:1.6}
+  .stats{display:flex;gap:14px;flex-wrap:wrap;margin-top:14px}
+  .stat{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+        padding:10px 16px;min-width:110px}
+  .stat b{display:block;font-size:24px}
+  .stat span{color:var(--muted);font-size:12px}
+  .controls{display:flex;gap:12px;flex-wrap:wrap;align-items:center;
+            padding:16px 26px;border-bottom:1px solid var(--line);background:var(--panel);
+            position:sticky;top:0;z-index:5}
+  .controls label{font-size:12px;color:var(--muted);margin-right:6px}
+  select,input{background:var(--panel2);border:1px solid var(--line);color:var(--text);
+               border-radius:8px;padding:8px 10px;font-size:14px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));
+        gap:18px;padding:24px 26px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;
+        overflow:hidden;display:flex;flex-direction:column;transition:transform .12s,border-color .12s}
+  .card:hover{transform:translateY(-3px);border-color:var(--accent)}
+  .thumb{height:170px;background:#0c141c center/cover no-repeat;position:relative}
+  .thumb .noimg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+                color:var(--muted);font-size:13px}
+  .badges{position:absolute;top:10px;left:10px;display:flex;gap:6px}
+  .badge{font-size:11px;font-weight:700;padding:3px 8px;border-radius:20px;color:#04121f}
+  .badge.new{background:var(--new);color:#052}
+  .badge.kat-dum{background:var(--dum)}
+  .badge.kat-pozemek{background:var(--pozemek)}
+  .src{position:absolute;top:10px;right:10px;font-size:11px;background:#04121fcc;
+       border:1px solid var(--line);padding:3px 8px;border-radius:20px;color:var(--text)}
+  .body{padding:14px 16px;display:flex;flex-direction:column;gap:8px;flex:1}
+  .title{font-size:15px;font-weight:600;line-height:1.35}
+  .loc{color:var(--muted);font-size:13px}
+  .price{font-size:19px;font-weight:800;color:var(--accent);margin-top:auto}
+  .dist{font-size:12px;color:var(--muted)}
+  a.open{display:block;text-align:center;padding:11px;background:var(--panel2);
+         border-top:1px solid var(--line);color:var(--accent);text-decoration:none;font-weight:600}
+  a.open:hover{background:#24384a}
+  .empty{padding:60px;text-align:center;color:var(--muted)}
+  footer{padding:20px 26px;color:var(--muted);font-size:12px;border-top:1px solid var(--line)}
+</style>
+</head>
+<body>
+<header>
+  <h1>🏡 Realitní asistent — domy a pozemky</h1>
+  <div class="meta">
+    Aktualizováno: <b>__CAS__</b> &nbsp;•&nbsp; Zdroje: __ZDROJE__<br>
+    Oblast: __OBCE__ (+__RADIUS__ km) &nbsp;•&nbsp;
+    Strop: dům __MAX_DUM__, pozemek __MAX_POZEMEK__<br>
+    Kritéria: __KRITERIA__
+  </div>
+  <div class="stats">
+    <div class="stat"><b id="s-total">__POCET__</b><span>nabídek celkem</span></div>
+    <div class="stat"><b id="s-new" style="color:var(--new)">__POCET_NOVYCH__</b><span>nových od minula</span></div>
+    <div class="stat"><b id="s-shown">0</b><span>zobrazeno</span></div>
+  </div>
+</header>
+
+<div class="controls">
+  <div><label>Kategorie</label>
+    <select id="f-kat"><option value="">Vše</option><option>Dům</option><option>Pozemek</option></select></div>
+  <div><label>Zdroj</label>
+    <select id="f-zdroj"><option value="">Vše</option></select></div>
+  <div><label>Řadit</label>
+    <select id="f-sort">
+      <option value="dist">Nejblíž obcím</option>
+      <option value="price-asc">Cena ↑</option>
+      <option value="price-desc">Cena ↓</option>
+      <option value="new">Nové první</option>
+    </select></div>
+  <div><label><input type="checkbox" id="f-new"> jen nové</label></div>
+  <div style="flex:1"></div>
+  <input id="f-text" placeholder="Hledat v názvu / lokalitě…" style="min-width:220px">
+</div>
+
+<div id="grid" class="grid"></div>
+<div id="empty" class="empty" style="display:none">Žádná nabídka neodpovídá filtru.</div>
+
+<footer>
+  Data z veřejných realitních serverů. Skript běží lokálně u tebe; dashboard se obnoví
+  po každém spuštění <code>hledej.py</code>. Ceny a dostupnost ověřuj vždy přímo v inzerátu.
+</footer>
+
+<script>
+const DATA = [/*__DATA__*/];
+
+const grid = document.getElementById('grid');
+const empty = document.getElementById('empty');
+const fKat = document.getElementById('f-kat');
+const fZdroj = document.getElementById('f-zdroj');
+const fSort = document.getElementById('f-sort');
+const fNew = document.getElementById('f-new');
+const fText = document.getElementById('f-text');
+
+// Naplnit filtr zdrojů.
+[...new Set(DATA.map(d=>d.zdroj))].sort().forEach(z=>{
+  const o=document.createElement('option');o.textContent=z;fZdroj.appendChild(o);
+});
+
+function esc(s){return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+function render(){
+  const kat=fKat.value, zdroj=fZdroj.value, q=fText.value.trim().toLowerCase(), jenNove=fNew.checked;
+  let list=DATA.filter(d=>{
+    if(kat && d.kategorie!==kat) return false;
+    if(zdroj && d.zdroj!==zdroj) return false;
+    if(jenNove && !d.je_nova) return false;
+    if(q && !((d.nazev||'').toLowerCase().includes(q) || (d.lokalita||'').toLowerCase().includes(q))) return false;
+    return true;
+  });
+  const s=fSort.value;
+  list.sort((a,b)=>{
+    if(s==='price-asc') return (a.cena||9e15)-(b.cena||9e15);
+    if(s==='price-desc') return (b.cena||0)-(a.cena||0);
+    if(s==='new') return (b.je_nova?1:0)-(a.je_nova?1:0);
+    return (a.vzdalenost_km??999)-(b.vzdalenost_km??999);
+  });
+
+  document.getElementById('s-shown').textContent=list.length;
+  grid.innerHTML='';
+  empty.style.display=list.length?'none':'block';
+
+  for(const d of list){
+    const katClass = d.kategorie==='Dům'?'kat-dum':'kat-pozemek';
+    const dist = (d.vzdalenost_km!=null) ? `${d.vzdalenost_km} km od: ${esc(d.nejblizsi_obec||'')}`
+                                         : (d.nejblizsi_obec?`obec: ${esc(d.nejblizsi_obec)}`:'');
+    const thumb = d.obrazek
+      ? `<div class="thumb" style="background-image:url('${esc(d.obrazek)}')">`
+      : `<div class="thumb"><div class="noimg">bez fotky</div>`;
+    const card=document.createElement('div');
+    card.className='card';
+    card.innerHTML=`
+      ${thumb}
+        <div class="badges">
+          ${d.je_nova?'<span class="badge new">NOVÉ</span>':''}
+          <span class="badge ${katClass}">${esc(d.kategorie)}</span>
+        </div>
+        <span class="src">${esc(d.zdroj)}</span>
+      </div>
+      <div class="body">
+        <div class="title">${esc(d.nazev)}</div>
+        <div class="loc">${esc(d.lokalita)}</div>
+        <div class="dist">${dist}</div>
+        <div class="price">${esc(d.cena_text||'')}</div>
+      </div>
+      <a class="open" href="${esc(d.url)}" target="_blank" rel="noopener">Otevřít inzerát →</a>`;
+    grid.appendChild(card);
+  }
+}
+
+[fKat,fZdroj,fSort,fNew,fText].forEach(el=>el.addEventListener('input',render));
+render();
+</script>
+</body>
+</html>
+"""
