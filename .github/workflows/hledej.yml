@@ -1,0 +1,42 @@
+name: Realitní asistent — denní běh
+
+on:
+  schedule:
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  hledej:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Stáhnout repozitář
+        uses: actions/checkout@v4
+
+      - name: Nastavit Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Nainstalovat závislosti
+        run: pip install -r requirements.txt
+
+      - name: Spustit hledání a vygenerovat dashboard
+        env:
+          DASHBOARD_FILE: index.html
+          SEEN_FILE: seen.json
+        run: python hledej.py
+
+      - name: Uložit výsledky zpět do repozitáře
+        run: |
+          git config user.name "realitni-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add index.html seen.json
+          if git diff --cached --quiet; then
+            echo "Žádná změna — nic ke commitu."
+          else
+            git commit -m "Aktualizace nabídek $(date -u +'%Y-%m-%d %H:%M UTC')"
+            git push
+          fi
