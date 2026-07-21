@@ -103,6 +103,17 @@ DUM_STAV_KLICOVA = [
     "novostavb", "projekt", "po rekonstrukci", "kompletni rekonstrukc",
     "zrekonstruov", "developer", "nova vystavb", "kolaudac", "velmi dobr",
 ]
+# Jasně špatný stav domu — u scraping zdrojů takové inzeráty vyřadíme.
+DUM_SPATNY_STAV = [
+    "k rekonstrukci", "pred rekonstrukci", "nutna rekonstrukce", "k celkove rekonstrukci",
+    "k demolici", "pred demolici", "ruina", "k uplne rekonstrukci", "vyzaduje rekonstrukci",
+]
+
+# Scraping zdroje (Bazoš, iDNES) mají krátké názvy bez uvedení stavu.
+# Při True se filtr chová MÍRNĚ: vyřadí jen jasně nevhodné (zahrada/pole u pozemků,
+# "k rekonstrukci" u domů), zbytek nechá projít (raději ukázat víc než něco minout).
+# Při False musí název obsahovat přímo klíčové slovo (přísné, ale hodně vyřadí).
+SCRAPING_FILTR_MIRNY = True
 
 # Sreality kódy (posílají se serveru, ať filtruje rovnou on):
 #   category_sub_cb pro pozemky: 18 = Bydlení (stavební). Uprav dle potřeby.
@@ -221,12 +232,22 @@ def projde_kriterii(item):
     if item.get("kategorie") == "Pozemek" and POZEMEK_JEN_STAVEBNI:
         if item.get("_server_filtered"):
             return True
+        # Jasně nestavební (zahrada, pole, les…) vždy pryč.
         if any(z in text for z in POZEMEK_NESMI_OBSAHOVAT):
             return False
+        # Mírný režim: generický "pozemek" necháme (může být stavební).
+        if SCRAPING_FILTR_MIRNY:
+            return True
         return any(k in text for k in POZEMEK_MUSI_OBSAHOVAT)
 
     if item.get("kategorie") == "Dům" and DUM_JEN_DOBRY_STAV:
         if item.get("_server_filtered"):
+            return True
+        # Jasně špatný stav vždy pryč.
+        if any(b in text for b in DUM_SPATNY_STAV):
+            return False
+        # Mírný režim: dům bez uvedení stavu necháme projít.
+        if SCRAPING_FILTR_MIRNY:
             return True
         return any(k in text for k in DUM_STAV_KLICOVA)
 
@@ -237,7 +258,19 @@ def projde_kriterii(item):
 #  ZDROJ 1: Sreality.cz  (JSON API)
 # =========================================================================
 
-def _sreality_lokalita_params():
+def _sreality_session():
+    """Session se 'zahřátím' — návštěva homepage kvůli cookies, což někdy
+    obejde blokaci datacentrových IP (např. na GitHub Actions)."""
+    s = requests.Session()
+    s.headers.update({**HEADERS, "Accept-Language": "cs,en;q=0.8"})
+    try:
+        s.get("https://www.sreality.cz/", timeout=30)
+    except Exception:
+        pass
+    return s
+
+
+def _sreality_lokalita_params(session):
     """
     Zjistí parametry pro omezení dotazu na region (okres) — buď z ručního
     nastavení, nebo přes našeptávač Sreality. Vrací dict, který se přidá
@@ -248,9 +281,9 @@ def _sreality_lokalita_params():
         print(f"  Sreality: lokalita ručně = {p}")
         return p
     try:
-        r = requests.get("https://www.sreality.cz/api/cs/v2/suggest",
-                         params={"phrase": SREALITY_OKRES_FRAZE, "count": 15},
-                         headers=HEADERS, timeout=30)
+        r = session.get("https://www.sreality.cz/api/cs/v2/suggest",
+                        params={"phrase": SREALITY_OKRES_FRAZE, "count": 15},
+                        timeout=30)
         r.raise_for_status()
         data = r.json()
         results = (data.get("results")
@@ -285,7 +318,8 @@ def zdroj_sreality():
         print("  ! requests není nainstalováno — Sreality přeskočeno.")
         return []
     API = "https://www.sreality.cz/api/cs/v2/estates"
-    lok_params = _sreality_lokalita_params()
+    session = _sreality_session()
+    lok_params = _sreality_lokalita_params(session)
     # category_main_cb: 2 = dům, 3 = pozemek; category_type_cb: 1 = prodej
     kategorie = [("Dům", 2, MAX_CENA_DUM), ("Pozemek", 3, MAX_CENA_POZEMEK)]
     out = []
@@ -303,7 +337,7 @@ def zdroj_sreality():
             if cmc == 2 and DUM_JEN_DOBRY_STAV and SREALITY_DUM_STAV_KODY:
                 params["building_condition"] = SREALITY_DUM_STAV_KODY  # opakuje se v URL
             try:
-                r = requests.get(API, params=params, headers=HEADERS, timeout=30)
+                r = session.get(API, params=params, timeout=30)
                 r.raise_for_status()
                 data = r.json()
             except Exception as e:
@@ -363,9 +397,9 @@ def zdroj_bezrealitky():
         list{
           id uri
           estateType offerType
-          imageAltText
+          imageAltText(locale: CS)
           price
-          address
+          address(locale: CS)
           gps{ lat lng }
           mainImage{ url(filter: RECORD_THUMB) }
         }
@@ -544,10 +578,21 @@ def zdroj_bazos():
 
 
 def _cislo_z_textu(t):
+    """Vytáhne cenu z textu. Bere jen ASCII číslice (pozor na 'm²' — '²' je
+    v Unicode taky číslice!). Vezme první souvislé číslo (cenu) před 'Kč'."""
     if not t:
         return 0
-    cislice = "".join(ch for ch in t if ch.isdigit())
-    return int(cislice) if cislice else 0
+    # Odřízneme případný údaj o ploše ("... m²") — cena bývá první číslo.
+    t = t.split("m²")[-1] if "Kč" in t.split("m²")[-1] else t
+    cislice = "".join(ch for ch in t if ch in "0123456789")
+    if not cislice:
+        return 0
+    try:
+        cena = int(cislice)
+    except ValueError:
+        return 0
+    # Absurdně velké číslo = spojená plocha+cena apod. → ber jako "na dotaz".
+    return cena if cena < 1_000_000_000 else 0
 
 
 def _id_z_url(url):
