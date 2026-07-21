@@ -110,6 +110,22 @@ SREALITY_POZEMEK_STAVEBNI_SUB = 18
 #   building_condition (stav objektu): 6=Novostavba, 5=Projekt, 8=Po rekonstrukci,
 #   1=Velmi dobrý, 4=Ve výstavbě. Vyber, co chceš brát.
 SREALITY_DUM_STAV_KODY = [6, 5, 8]
+
+# --- Cílení na lokalitu přímo v dotazu (aby se nestahovala celá ČR) --------
+# Sreality: skript si přes "našeptávač" sám najde okres podle názvu níže
+# a hledá jen v něm (pak se ještě zúží na okruh kolem obcí přes GPS).
+SREALITY_OKRES_FRAZE = "Frýdek-Místek"
+# Kdyby našeptávač nefungoval, sem lze ručně vyplnit typ a id z Sreality
+# (např. type="district"). Necháš-li prázdné, použije se našeptávač.
+SREALITY_LOCALITY_TYPE = ""
+SREALITY_LOCALITY_ID = ""
+
+# Bazoš: hledá podle PSČ + okruhu. Uveď PSČ obcí (bez mezer) a okruh v km.
+BAZOS_PSC = ["73914", "73904", "73951", "73938"]  # Ostravice, Raškovice, H./D. Domaslavice
+BAZOS_OKRUH_KM = 10
+
+# Podrobný výpis do logu (užitečné pro ladění v GitHub Actions).
+VERBOSE = True
 # --------------------------------------------------------------------------
 
 # Ochrana proti přetížení serverů.
@@ -171,6 +187,10 @@ def lokalita_vyhovuje(item):
     - Pokud nemá GPS: textová shoda názvu obce v poli 'lokalita'.
     Vrací (bool, nejblizsi_obec, vzdalenost_km_nebo_None).
     """
+    # Zdroj už omezil lokalitu na serveru (např. Bazoš přes PSČ+okruh).
+    if item.get("_lokalita_ok"):
+        return True, None, None
+
     lat, lon = item.get("lat"), item.get("lon")
     if lat is not None and lon is not None:
         obec, d = nejblizsi_obec(lat, lon)
@@ -217,20 +237,66 @@ def projde_kriterii(item):
 #  ZDROJ 1: Sreality.cz  (JSON API)
 # =========================================================================
 
+def _sreality_lokalita_params():
+    """
+    Zjistí parametry pro omezení dotazu na region (okres) — buď z ručního
+    nastavení, nebo přes našeptávač Sreality. Vrací dict, který se přidá
+    do dotazu na inzeráty (např. {'locality_district_id': 72}).
+    """
+    if SREALITY_LOCALITY_TYPE and SREALITY_LOCALITY_ID:
+        p = {f"locality_{SREALITY_LOCALITY_TYPE}_id": SREALITY_LOCALITY_ID}
+        print(f"  Sreality: lokalita ručně = {p}")
+        return p
+    try:
+        r = requests.get("https://www.sreality.cz/api/cs/v2/suggest",
+                         params={"phrase": SREALITY_OKRES_FRAZE, "count": 15},
+                         headers=HEADERS, timeout=30)
+        r.raise_for_status()
+        data = r.json()
+        results = (data.get("results")
+                   or (data.get("_embedded", {}) or {}).get("results")
+                   or data.get("items") or [])
+        best, first = None, None
+        for it in results:
+            s = it.get("settings") or it.get("userData") or it.get("data") or {}
+            typ, val = s.get("type"), s.get("value")
+            if not (typ and val):
+                continue
+            if first is None:
+                first = (typ, val)
+            if typ == "district":          # okres = ideální šíře záběru
+                best = (typ, val)
+                break
+        chosen = best or first
+        if chosen:
+            p = {f"locality_{chosen[0]}_id": chosen[1]}
+            print(f"  Sreality: našeptávač našel lokalitu = {p} "
+                  f"(fráze '{SREALITY_OKRES_FRAZE}')")
+            return p
+        print("  ! Sreality: našeptávač nevrátil použitelný region — "
+              "hledám bez omezení lokality (může vrátit málo výsledků).")
+    except Exception as e:
+        print(f"  ! Sreality: našeptávač selhal ({e}) — hledám bez omezení.")
+    return {}
+
+
 def zdroj_sreality():
     if requests is None:
         print("  ! requests není nainstalováno — Sreality přeskočeno.")
         return []
     API = "https://www.sreality.cz/api/cs/v2/estates"
+    lok_params = _sreality_lokalita_params()
     # category_main_cb: 2 = dům, 3 = pozemek; category_type_cb: 1 = prodej
     kategorie = [("Dům", 2, MAX_CENA_DUM), ("Pozemek", 3, MAX_CENA_POZEMEK)]
     out = []
     for kat_nazev, cmc, _max in kategorie:
+        pocet_kat = 0
         for page in range(1, MAX_STRANEK + 1):
             params = {
                 "category_main_cb": cmc, "category_type_cb": 1,
                 "per_page": PER_PAGE, "page": page, "tms": int(time.time() * 1000),
             }
+            params.update(lok_params)  # omezení na region (okres)
             # Kvalitativní kritéria řešíme rovnou na serveru Sreality.
             if cmc == 3 and POZEMEK_JEN_STAVEBNI:
                 params["category_sub_cb"] = SREALITY_POZEMEK_STAVEBNI_SUB
@@ -243,9 +309,13 @@ def zdroj_sreality():
             except Exception as e:
                 print(f"  ! Sreality chyba ({kat_nazev}, str.{page}): {e}")
                 break
+            if page == 1 and VERBOSE:
+                print(f"  Sreality {kat_nazev}: server hlásí result_size="
+                      f"{data.get('result_size')} (URL: {r.url})")
             estates = (data.get("_embedded", {}) or {}).get("estates", []) or []
             if not estates:
                 break
+            pocet_kat += len(estates)
             for e in estates:
                 gps = e.get("gps", {}) or {}
                 links = e.get("_links", {}) or {}
@@ -272,6 +342,8 @@ def zdroj_sreality():
             if data.get("result_size") and page * PER_PAGE >= data["result_size"]:
                 break
             time.sleep(0.4)
+        if VERBOSE:
+            print(f"  Sreality {kat_nazev}: staženo {pocet_kat} inzerátů (před filtrem lokality)")
     return out
 
 
@@ -314,7 +386,11 @@ def zdroj_bezrealitky():
             except Exception as e:
                 print(f"  ! Bezrealitky chyba ({kat_nazev}): {e}")
                 break
+            if data.get("errors"):
+                print(f"  ! Bezrealitky GraphQL chyba ({kat_nazev}): {data['errors']}")
             lst = (((data.get("data") or {}).get("listAdverts") or {}).get("list")) or []
+            if offset == 0 and VERBOSE:
+                print(f"  Bezrealitky {kat_nazev}: 1. dávka vrátila {len(lst)} inzerátů")
             if not lst:
                 break
             for a in lst:
@@ -363,6 +439,8 @@ def zdroj_idnes():
                 print(f"  ! iDNES chyba ({kat_nazev}, str.{page}): {e}")
                 break
             karty = soup.select("div.c-products__item, div.c-list__item")
+            if page == 1 and VERBOSE:
+                print(f"  iDNES {kat_nazev}: nalezeno {len(karty)} karet (URL: {r.url})")
             if not karty:
                 break
             for k in karty:
@@ -398,49 +476,70 @@ def zdroj_bazos():
     if requests is None or BeautifulSoup is None:
         print("  ! requests/bs4 chybí — Bazoš přeskočeno.")
         return []
-    # reality.bazos.cz — sekce prodej. Bazoš nemá kategorie domů/pozemků striktně,
-    # proto hledáme klíčová slova a filtrujeme lokalitou + cenou.
+    # reality.bazos.cz — hledáme podle PSČ + okruhu (hlokalita + humkreis),
+    # takže se rovnou omezíme na tvoji oblast.
     hledani = [
         ("Dům", "https://reality.bazos.cz/prodam/dum/", MAX_CENA_DUM),
         ("Pozemek", "https://reality.bazos.cz/prodam/pozemek/", MAX_CENA_POZEMEK),
     ]
     out = []
+    videno_href = set()
     for kat_nazev, base, _max in hledani:
-        for start in range(0, 100, 20):  # bazoš stránkuje po 20
-            url = base if start == 0 else f"{base}{start}/"
-            try:
-                r = requests.get(url, headers=HEADERS, timeout=30)
-                r.raise_for_status()
-                soup = BeautifulSoup(r.text, "html.parser")
-            except Exception as e:
-                print(f"  ! Bazoš chyba ({kat_nazev}): {e}")
-                break
-            karty = soup.select("div.inzeraty, div.inzeratyflex")
-            if not karty:
-                break
-            for k in karty:
-                a = k.select_one("h2.nadpis a, a.nadpis, h2 a")
-                cena_el = k.select_one(".inzeratycena, span.cena")
-                lok_el = k.select_one(".inzeratylok, .lokalita")
-                img_el = k.select_one("img")
-                if not a:
-                    continue
-                href = a.get("href", "")
-                if href and href.startswith("/"):
-                    href = "https://reality.bazos.cz" + href
-                cena = _cislo_z_textu(cena_el.get_text() if cena_el else "")
-                out.append({
-                    "id": f"bazos-{_id_z_url(href)}",
-                    "zdroj": "Bazoš",
-                    "kategorie": kat_nazev,
-                    "nazev": a.get_text(strip=True) or "Inzerát Bazoš",
-                    "lokalita": (lok_el.get_text(" ", strip=True) if lok_el else ""),
-                    "cena": cena, "max_cena": _max,
-                    "lat": None, "lon": None,
-                    "url": href or "https://reality.bazos.cz/",
-                    "obrazek": (img_el.get("src") or "") if img_el else "",
-                })
-            time.sleep(0.5)
+        pocet_kat = 0
+        for psc in (BAZOS_PSC or [""]):
+            for crz in range(0, 60, 20):  # stránkování po 20 (param crz)
+                params = {
+                    "hlokalita": psc,
+                    "humkreis": BAZOS_OKRUH_KM,
+                    "cenaod": "",
+                    "cenado": _max,
+                }
+                if crz:
+                    params["crz"] = crz
+                try:
+                    r = requests.get(base, params=params, headers=HEADERS, timeout=30)
+                    r.raise_for_status()
+                    soup = BeautifulSoup(r.text, "html.parser")
+                except Exception as e:
+                    print(f"  ! Bazoš chyba ({kat_nazev}, PSČ {psc}): {e}")
+                    break
+                karty = soup.select("div.inzeraty.inzeratyflex, div.inzeraty, div.inzeratyflex")
+                if crz == 0 and VERBOSE:
+                    print(f"  Bazoš {kat_nazev} PSČ {psc}: nalezeno {len(karty)} karet "
+                          f"(URL: {r.url})")
+                if not karty:
+                    break
+                for k in karty:
+                    a = k.select_one("h2.nadpis a, .inzeratynadpis a, a.nadpis, h2 a")
+                    cena_el = k.select_one(".inzeratycena, span.cena")
+                    lok_el = k.select_one(".inzeratylok, .lokalita")
+                    img_el = k.select_one("img")
+                    if not a:
+                        continue
+                    href = a.get("href", "")
+                    if href and href.startswith("/"):
+                        href = "https://reality.bazos.cz" + href
+                    if href in videno_href:
+                        continue
+                    videno_href.add(href)
+                    cena = _cislo_z_textu(cena_el.get_text() if cena_el else "")
+                    out.append({
+                        "id": f"bazos-{_id_z_url(href)}",
+                        "zdroj": "Bazoš",
+                        "kategorie": kat_nazev,
+                        "nazev": a.get_text(strip=True) or "Inzerát Bazoš",
+                        "lokalita": (lok_el.get_text(" ", strip=True) if lok_el else ""),
+                        "cena": cena, "max_cena": _max,
+                        "lat": None, "lon": None,
+                        "url": href or "https://reality.bazos.cz/",
+                        "obrazek": (img_el.get("src") or "") if img_el else "",
+                        # PSČ+okruh omezil lokalitu na serveru → GPS filtr netřeba
+                        "_lokalita_ok": True,
+                    })
+                    pocet_kat += 1
+                time.sleep(0.4)
+        if VERBOSE:
+            print(f"  Bazoš {kat_nazev}: staženo {pocet_kat} inzerátů (v okruhu PSČ)")
     return out
 
 
@@ -483,21 +582,39 @@ def najdi_nemovitosti(demo=False):
             except Exception as e:
                 print(f"  ! Zdroj {klic} selhal: {e}")
 
+    if VERBOSE:
+        syrove = {}
+        for it in raw:
+            syrove[it["zdroj"]] = syrove.get(it["zdroj"], 0) + 1
+        print("\n--- Staženo celkem (před filtry) ---")
+        for z, c in sorted(syrove.items()):
+            print(f"   {z}: {c}")
+
+    # Počítadla, kolik vypadlo na kterém filtru (pro diagnostiku).
+    stat = {"cena": 0, "kriteria": 0, "lokalita": 0, "prohlo": 0}
     vyhovujici = []
     for item in raw:
         # Filtr ceny (cena 0 = "na dotaz" -> necháme projít).
         if item["cena"] and item["max_cena"] and item["cena"] > item["max_cena"]:
+            stat["cena"] += 1
             continue
         # Kvalitativní filtr (stavební pozemek / dobrý stav domu).
         if not projde_kriterii(item):
+            stat["kriteria"] += 1
             continue
         # Filtr lokality.
         ok, obec, d = lokalita_vyhovuje(item)
         if not ok:
+            stat["lokalita"] += 1
             continue
         item["nejblizsi_obec"] = obec
         item["vzdalenost_km"] = d
+        stat["prohlo"] += 1
         vyhovujici.append(item)
+
+    if VERBOSE:
+        print(f"--- Vyřazeno: cena={stat['cena']}, kritéria={stat['kriteria']}, "
+              f"lokalita={stat['lokalita']} | prošlo={stat['prohlo']} ---\n")
 
     vyhovujici.sort(key=lambda x: (x.get("vzdalenost_km") if x.get("vzdalenost_km") is not None else 999,
                                    x.get("cena") or 0))
