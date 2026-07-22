@@ -108,8 +108,8 @@ POZEMEK_NESMI_OBSAHOVAT = [
     "rybnik", "sad", "vinice", "komercni", "zemedel",
 ]
 DUM_STAV_KLICOVA = [
-    "novostavb", "projekt", "po rekonstrukci", "kompletni rekonstrukc",
-    "zrekonstruov", "developer", "nova vystavb", "kolaudac", "velmi dobr",
+    "novostavb", "po rekonstrukci", "kompletni rekonstrukc", "zrekonstruov",
+    "developer", "nova vystavb", "kolaudac", "velmi dobr", "dobry stav",
 ]
 # Jasně špatný stav domu — u scraping zdrojů takové inzeráty vyřadíme.
 DUM_SPATNY_STAV = [
@@ -126,9 +126,12 @@ SCRAPING_FILTR_MIRNY = True
 # Sreality kódy (posílají se serveru, ať filtruje rovnou on):
 #   category_sub_cb pro pozemky: 18 = Bydlení (stavební). Uprav dle potřeby.
 SREALITY_POZEMEK_STAVEBNI_SUB = 18
-#   building_condition (stav objektu): 6=Novostavba, 5=Projekt, 8=Po rekonstrukci,
-#   1=Velmi dobrý, 4=Ve výstavbě. Vyber, co chceš brát.
-SREALITY_DUM_STAV_KODY = [6, 5, 8]
+#   building_condition (stav objektu) — ověřený číselník Sreality:
+#     1=Velmi dobrý, 2=Dobrý, 3=Špatný, 4=Ve výstavbě, 5=Projekt,
+#     6=Novostavba, 7=K demolici, 8=Před rekonstrukcí, 9=Po rekonstrukci,
+#     10=V rekonstrukci.
+#   Vyber, které stavy brát (pozor: 8 = PŘED rekonstrukcí = k opravě!).
+SREALITY_DUM_STAV_KODY = [1, 2, 6, 9]   # velmi dobrý, dobrý, novostavba, po rekonstrukci
 
 # --- Cílení na lokalitu přímo v dotazu (aby se nestahovala celá ČR) --------
 # Sreality: skript si přes "našeptávač" sám najde okres podle názvu níže
@@ -313,7 +316,9 @@ def zdroj_sreality():
     lat_min, lat_max, lon_min, lon_max = _bbox_z_obci()
     # category_main_cb: 2 = dům, 3 = pozemek; category_type_cb: 1 = prodej
     kategorie = [("Dům", 2, MAX_CENA_DUM), ("Pozemek", 3, MAX_CENA_POZEMEK)]
+    IMG_FL = "?fl=res,400,300,3|shr,,20|webp,60"  # povolená velikost náhledu na sdn.cz
     out = []
+    videno = set()
     for kat_nazev, cmc, _max in kategorie:
         pocet_kat = 0
         for page in range(1, MAX_STRANEK + 1):
@@ -341,15 +346,37 @@ def zdroj_sreality():
             if not results:
                 break
             for e in results:
-                loc = e.get("locality") or {}
-                imgs = e.get("advert_images") or []
-                img = ""
-                if imgs:
-                    first = imgs[0]
-                    img = first.get("href", "") if isinstance(first, dict) else str(first)
-                    if img.startswith("//"):
-                        img = "https:" + img
                 hash_id = e.get("hash_id")
+                if hash_id in videno:      # ochrana proti duplicitám ze stránkování
+                    continue
+                videno.add(hash_id)
+                loc = e.get("locality") or {}
+                # Více fotek: advert_images_all obsahuje celou galerii.
+                obrazky = []
+                for im in (e.get("advert_images_all") or e.get("advert_images") or []):
+                    u = im.get("advert_image_sdn_url") or im.get("href") if isinstance(im, dict) else str(im)
+                    if not u:
+                        continue
+                    if u.startswith("//"):
+                        u = "https:" + u
+                    obrazky.append(u + IMG_FL)
+                    if len(obrazky) >= 10:
+                        break
+                img = obrazky[0] if obrazky else ""
+                # Základní popis: vzdálenosti k občanské vybavenosti.
+                def _vzd(v):
+                    if not v:
+                        return None
+                    return f"{round(v/1000, 1)} km" if v >= 1000 else f"{v} m"
+                popis_casti = []
+                for stitek, klic in [("škola", "poi_school_distance"),
+                                     ("obchod", "poi_shop_distance"),
+                                     ("MHD", "poi_bus_public_transport_distance"),
+                                     ("lékař", "poi_medic_distance")]:
+                    d_val = _vzd(e.get(klic))
+                    if d_val:
+                        popis_casti.append(f"{stitek} {d_val}")
+                popis = " · ".join(popis_casti)
                 typ = "dum" if cmc == 2 else "pozemek"
                 sub = (e.get("category_sub_cb") or {}).get("name", "") if isinstance(e.get("category_sub_cb"), dict) else ""
                 sub_seo = _bez_diakritiky(sub).replace(" ", "-") or "x"
@@ -364,7 +391,8 @@ def zdroj_sreality():
                     "kategorie": kat_nazev,
                     "nazev": e.get("advert_name", "") or "",
                     "lokalita": lok_txt,
-                    "cena": e.get("price_czk", 0) or 0,
+                    # price_summary_czk = celková cena (u pozemků je price_czk cena za m²!)
+                    "cena": e.get("price_summary_czk") or e.get("price_czk", 0) or 0,
                     "max_cena": _max,
                     "lat": loc.get("gps_lat"), "lon": loc.get("gps_lon"),
                     "url": url, "obrazek": img,
@@ -693,13 +721,15 @@ def vygeneruj_dashboard(nabidky, nove_ids):
     cas = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
     pocet_novych = sum(1 for n in nabidky if n["id"] in nove_ids)
     data_json = json.dumps(
-        [{**n, "je_nova": n["id"] in nove_ids, "cena_text": format_cena(n["cena"])}
+        [{**n, "je_nova": n["id"] in nove_ids, "cena_text": format_cena(n["cena"]),
+          "obrazky": n.get("obrazky") or ([n["obrazek"]] if n.get("obrazek") else []),
+          "popis": n.get("popis", "")}
          for n in nabidky], ensure_ascii=False)
     obce_txt = ", ".join(o["nazev"] for o in OBCE)
     zdroje_txt = ", ".join(k for k, v in ZDROJE_ZAPNUTE.items() if v)
     kriteria = []
     kriteria.append("pozemky jen stavební" if POZEMEK_JEN_STAVEBNI else "pozemky všechny")
-    kriteria.append("domy jen v dobrém stavu (novostavba / projekt / po rekonstrukci)"
+    kriteria.append("domy jen: velmi dobrý / dobrý / novostavba / po rekonstrukci"
                     if DUM_JEN_DOBRY_STAV else "domy všechny")
     kriteria_txt = "; ".join(kriteria)
 

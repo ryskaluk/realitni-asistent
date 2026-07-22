@@ -33,9 +33,17 @@
   .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;
         overflow:hidden;display:flex;flex-direction:column;transition:transform .12s,border-color .12s}
   .card:hover{transform:translateY(-3px);border-color:var(--accent)}
-  .thumb{height:170px;background:#0c141c center/cover no-repeat;position:relative}
+  .thumb{height:190px;background:#0c141c;position:relative;overflow:hidden}
+  .thumb .main{width:100%;height:100%;object-fit:cover;display:block}
   .thumb .noimg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
                 color:var(--muted);font-size:13px}
+  .count{position:absolute;bottom:10px;right:10px;font-size:12px;background:#04121fcc;
+         border:1px solid var(--line);padding:2px 8px;border-radius:20px;color:var(--text)}
+  .strip{display:flex;gap:4px;padding:4px;background:var(--panel);overflow-x:auto}
+  .strip img{width:52px;height:40px;object-fit:cover;border-radius:4px;cursor:pointer;
+             flex:0 0 auto;opacity:.75;transition:opacity .1s}
+  .strip img:hover{opacity:1;outline:2px solid var(--accent)}
+  .desc{font-size:12px;color:var(--muted);line-height:1.5}
   .badges{position:absolute;top:10px;left:10px;display:flex;gap:6px}
   .badge{font-size:11px;font-weight:700;padding:3px 8px;border-radius:20px;color:#04121f}
   .badge.new{background:var(--new);color:#052}
@@ -59,10 +67,10 @@
 <header>
   <h1>🏡 Realitní asistent — domy a pozemky</h1>
   <div class="meta">
-    Aktualizováno: <b>21.07.2026 23:02</b> &nbsp;•&nbsp; Zdroje: sreality, bezrealitky, idnes, bazos<br>
+    Aktualizováno: <b>22.07.2026 06:17</b> &nbsp;•&nbsp; Zdroje: sreality, bezrealitky, idnes, bazos<br>
     Oblast: Ostravice, Raškovice, Horní Domaslavice, Dolní Domaslavice (+5 km) &nbsp;•&nbsp;
     Strop: dům 15 000 000 Kč, pozemek 5 000 000 Kč<br>
-    Kritéria: pozemky jen stavební; domy jen v dobrém stavu (novostavba / projekt / po rekonstrukci)
+    Kritéria: pozemky jen stavební; domy jen: velmi dobrý / dobrý / novostavba / po rekonstrukci
   </div>
   <div class="stats">
     <div class="stat"><b id="s-total">7</b><span>nabídek celkem</span></div>
@@ -97,7 +105,7 @@
 </footer>
 
 <script>
-const DATA = [{"id": "sreality-demo2", "zdroj": "Sreality", "kategorie": "Dům", "nazev": "Novostavba rodinného domu 6+kk, 220 m²", "lokalita": "Horní Domaslavice", "cena": 14500000, "max_cena": 15000000, "lat": 49.699, "lon": 18.466, "url": "https://www.sreality.cz/", "obrazek": "", "_server_filtered": true, "nejblizsi_obec": "Horní Domaslavice", "vzdalenost_km": 0.3, "je_nova": false, "cena_text": "14 500 000 Kč"}, {"id": "sreality-demo1", "zdroj": "Sreality", "kategorie": "Dům", "nazev": "Prodej rodinného domu 5+kk, 180 m²", "lokalita": "Ostravice, okres Frýdek-Místek", "cena": 8900000, "max_cena": 15000000, "lat": 49.537, "lon": 18.39, "url": "https://www.sreality.cz/", "obrazek": "", "_server_filtered": true, "nejblizsi_obec": "Ostravice", "vzdalenost_km": 0.4, "je_nova": false, "cena_text": "8 900 000 Kč"}, {"id": "bezrealitky-demo4", "zdroj": "Bezrealitky", "kategorie": "Dům", "nazev": "Prodej domu – developerský projekt novostavby", "lokalita": "Raškovice", "cena": 9300000, "max_cena": 15000000, "lat": 49.612, "lon": 18.44, "url": "https://www.sreality.cz/", "obrazek": "", "_server_filtered": false, "nejblizsi_obec": "Raškovice", "vzdalenost_km": 0.4, "je_nova": false, "cena_text": "9 300 000 Kč"}, {"id": "bezrealitky-demo8", "zdroj": "Bezrealitky", "kategorie": "Pozemek", "nazev": "Stavební pozemek 1 200 m²", "lokalita": "Ostravice", "cena": 3600000, "max_cena": 5000000, "lat": 49.53, "lon": 18.383, "url": "https://www.sreality.cz/", "obrazek": "", "_server_filtered": false, "nejblizsi_obec": "Ostravice", "vzdalenost_km": 0.5, "je_nova": false, "cena_text": "3 600 000 Kč"}, {"id": "bazoš-demo9", "zdroj": "Bazoš", "kategorie": "Pozemek", "nazev": "Prodám stavební parcelu 900 m²", "lokalita": "Pražmo u Raškovic", "cena": 2950000, "max_cena": 5000000, "lat": null, "lon": null, "url": "https://www.sreality.cz/", "obrazek": "", "_server_filtered": false, "nejblizsi_obec": "Pražmo", "vzdalenost_km": null, "je_nova": false, "cena_text": "2 950 000 Kč"}, {"id": "idnes-demo10", "zdroj": "iDNES", "kategorie": "Pozemek", "nazev": "Stavební pozemek pro bydlení 2 500 m²", "lokalita": "Raškovice, Beskydy", "cena": 4200000, "max_cena": 5000000, "lat": null, "lon": null, "url": "https://www.sreality.cz/", "obrazek": "", "_server_filtered": false, "nejblizsi_obec": "Raškovice", "vzdalenost_km": null, "je_nova": false, "cena_text": "4 200 000 Kč"}, {"id": "idnes-demo3", "zdroj": "iDNES", "kategorie": "Dům", "nazev": "Rodinný dům 4+1 po rekonstrukci, 140 m²", "lokalita": "Dolní Domaslavice", "cena": 12800000, "max_cena": 15000000, "lat": null, "lon": null, "url": "https://www.sreality.cz/", "obrazek": "", "_server_filtered": false, "nejblizsi_obec": "Dolní Domaslavice", "vzdalenost_km": null, "je_nova": false, "cena_text": "12 800 000 Kč"}];
+const DATA = [{"id": "sreality-demo2", "zdroj": "Sreality", "kategorie": "Dům", "nazev": "Novostavba rodinného domu 6+kk, 220 m²", "lokalita": "Horní Domaslavice", "cena": 14500000, "max_cena": 15000000, "lat": 49.699, "lon": 18.466, "url": "https://www.sreality.cz/", "obrazek": "", "_server_filtered": true, "nejblizsi_obec": "Horní Domaslavice", "vzdalenost_km": 0.3, "je_nova": false, "cena_text": "14 500 000 Kč", "obrazky": [], "popis": ""}, {"id": "sreality-demo1", "zdroj": "Sreality", "kategorie": "Dům", "nazev": "Prodej rodinného domu 5+kk, 180 m²", "lokalita": "Ostravice, okres Frýdek-Místek", "cena": 8900000, "max_cena": 15000000, "lat": 49.537, "lon": 18.39, "url": "https://www.sreality.cz/", "obrazek": "", "_server_filtered": true, "nejblizsi_obec": "Ostravice", "vzdalenost_km": 0.4, "je_nova": false, "cena_text": "8 900 000 Kč", "obrazky": [], "popis": ""}, {"id": "bezrealitky-demo4", "zdroj": "Bezrealitky", "kategorie": "Dům", "nazev": "Prodej domu – developerský projekt novostavby", "lokalita": "Raškovice", "cena": 9300000, "max_cena": 15000000, "lat": 49.612, "lon": 18.44, "url": "https://www.sreality.cz/", "obrazek": "", "_server_filtered": false, "nejblizsi_obec": "Raškovice", "vzdalenost_km": 0.4, "je_nova": false, "cena_text": "9 300 000 Kč", "obrazky": [], "popis": ""}, {"id": "bezrealitky-demo8", "zdroj": "Bezrealitky", "kategorie": "Pozemek", "nazev": "Stavební pozemek 1 200 m²", "lokalita": "Ostravice", "cena": 3600000, "max_cena": 5000000, "lat": 49.53, "lon": 18.383, "url": "https://www.sreality.cz/", "obrazek": "", "_server_filtered": false, "nejblizsi_obec": "Ostravice", "vzdalenost_km": 0.5, "je_nova": false, "cena_text": "3 600 000 Kč", "obrazky": [], "popis": ""}, {"id": "bazoš-demo9", "zdroj": "Bazoš", "kategorie": "Pozemek", "nazev": "Prodám stavební parcelu 900 m²", "lokalita": "Pražmo u Raškovic", "cena": 2950000, "max_cena": 5000000, "lat": null, "lon": null, "url": "https://www.sreality.cz/", "obrazek": "", "_server_filtered": false, "nejblizsi_obec": "Pražmo", "vzdalenost_km": null, "je_nova": false, "cena_text": "2 950 000 Kč", "obrazky": [], "popis": ""}, {"id": "idnes-demo10", "zdroj": "iDNES", "kategorie": "Pozemek", "nazev": "Stavební pozemek pro bydlení 2 500 m²", "lokalita": "Raškovice, Beskydy", "cena": 4200000, "max_cena": 5000000, "lat": null, "lon": null, "url": "https://www.sreality.cz/", "obrazek": "", "_server_filtered": false, "nejblizsi_obec": "Raškovice", "vzdalenost_km": null, "je_nova": false, "cena_text": "4 200 000 Kč", "obrazky": [], "popis": ""}, {"id": "idnes-demo3", "zdroj": "iDNES", "kategorie": "Dům", "nazev": "Rodinný dům 4+1 po rekonstrukci, 140 m²", "lokalita": "Dolní Domaslavice", "cena": 12800000, "max_cena": 15000000, "lat": null, "lon": null, "url": "https://www.sreality.cz/", "obrazek": "", "_server_filtered": false, "nejblizsi_obec": "Dolní Domaslavice", "vzdalenost_km": null, "je_nova": false, "cena_text": "12 800 000 Kč", "obrazky": [], "popis": ""}];
 
 const grid = document.getElementById('grid');
 const empty = document.getElementById('empty');
@@ -139,23 +147,33 @@ function render(){
     const katClass = d.kategorie==='Dům'?'kat-dum':'kat-pozemek';
     const dist = (d.vzdalenost_km!=null) ? `${d.vzdalenost_km} km od: ${esc(d.nejblizsi_obec||'')}`
                                          : (d.nejblizsi_obec?`obec: ${esc(d.nejblizsi_obec)}`:'');
-    const thumb = d.obrazek
-      ? `<div class="thumb" style="background-image:url('${esc(d.obrazek)}')">`
-      : `<div class="thumb"><div class="noimg">bez fotky</div>`;
+    const fotky = (d.obrazky && d.obrazky.length) ? d.obrazky : (d.obrazek ? [d.obrazek] : []);
+    const hlavni = fotky.length
+      ? `<img class="main" src="${esc(fotky[0])}" loading="lazy" referrerpolicy="no-referrer" onerror="this.style.visibility='hidden'">`
+      : `<div class="noimg">bez fotky</div>`;
+    const pocetFotek = fotky.length>1 ? `<span class="count">📷 ${fotky.length}</span>` : '';
+    // Pásek náhledů (max 6) — kliknutím se přepne hlavní fotka.
+    const strip = fotky.length>1
+      ? `<div class="strip">${fotky.slice(0,6).map(u=>`<img src="${esc(u)}" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()" onclick="this.closest('.card').querySelector('.main').src=this.src">`).join('')}</div>`
+      : '';
+    const popis = d.popis ? `<div class="desc">${esc(d.popis)}</div>` : '';
     const card=document.createElement('div');
     card.className='card';
     card.innerHTML=`
-      ${thumb}
+      <div class="thumb">${hlavni}
         <div class="badges">
           ${d.je_nova?'<span class="badge new">NOVÉ</span>':''}
           <span class="badge ${katClass}">${esc(d.kategorie)}</span>
         </div>
         <span class="src">${esc(d.zdroj)}</span>
+        ${pocetFotek}
       </div>
+      ${strip}
       <div class="body">
         <div class="title">${esc(d.nazev)}</div>
         <div class="loc">${esc(d.lokalita)}</div>
         <div class="dist">${dist}</div>
+        ${popis}
         <div class="price">${esc(d.cena_text||'')}</div>
       </div>
       <a class="open" href="${esc(d.url)}" target="_blank" rel="noopener">Otevřít inzerát →</a>`;

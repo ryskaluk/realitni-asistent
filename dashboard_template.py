@@ -36,9 +36,17 @@ HTML_SABLONA = r"""<!DOCTYPE html>
   .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;
         overflow:hidden;display:flex;flex-direction:column;transition:transform .12s,border-color .12s}
   .card:hover{transform:translateY(-3px);border-color:var(--accent)}
-  .thumb{height:170px;background:#0c141c center/cover no-repeat;position:relative}
+  .thumb{height:190px;background:#0c141c;position:relative;overflow:hidden}
+  .thumb .main{width:100%;height:100%;object-fit:cover;display:block}
   .thumb .noimg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
                 color:var(--muted);font-size:13px}
+  .count{position:absolute;bottom:10px;right:10px;font-size:12px;background:#04121fcc;
+         border:1px solid var(--line);padding:2px 8px;border-radius:20px;color:var(--text)}
+  .strip{display:flex;gap:4px;padding:4px;background:var(--panel);overflow-x:auto}
+  .strip img{width:52px;height:40px;object-fit:cover;border-radius:4px;cursor:pointer;
+             flex:0 0 auto;opacity:.75;transition:opacity .1s}
+  .strip img:hover{opacity:1;outline:2px solid var(--accent)}
+  .desc{font-size:12px;color:var(--muted);line-height:1.5}
   .badges{position:absolute;top:10px;left:10px;display:flex;gap:6px}
   .badge{font-size:11px;font-weight:700;padding:3px 8px;border-radius:20px;color:#04121f}
   .badge.new{background:var(--new);color:#052}
@@ -142,23 +150,33 @@ function render(){
     const katClass = d.kategorie==='Dům'?'kat-dum':'kat-pozemek';
     const dist = (d.vzdalenost_km!=null) ? `${d.vzdalenost_km} km od: ${esc(d.nejblizsi_obec||'')}`
                                          : (d.nejblizsi_obec?`obec: ${esc(d.nejblizsi_obec)}`:'');
-    const thumb = d.obrazek
-      ? `<div class="thumb" style="background-image:url('${esc(d.obrazek)}')">`
-      : `<div class="thumb"><div class="noimg">bez fotky</div>`;
+    const fotky = (d.obrazky && d.obrazky.length) ? d.obrazky : (d.obrazek ? [d.obrazek] : []);
+    const hlavni = fotky.length
+      ? `<img class="main" src="${esc(fotky[0])}" loading="lazy" referrerpolicy="no-referrer" onerror="this.style.visibility='hidden'">`
+      : `<div class="noimg">bez fotky</div>`;
+    const pocetFotek = fotky.length>1 ? `<span class="count">📷 ${fotky.length}</span>` : '';
+    // Pásek náhledů (max 6) — kliknutím se přepne hlavní fotka.
+    const strip = fotky.length>1
+      ? `<div class="strip">${fotky.slice(0,6).map(u=>`<img src="${esc(u)}" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()" onclick="this.closest('.card').querySelector('.main').src=this.src">`).join('')}</div>`
+      : '';
+    const popis = d.popis ? `<div class="desc">${esc(d.popis)}</div>` : '';
     const card=document.createElement('div');
     card.className='card';
     card.innerHTML=`
-      ${thumb}
+      <div class="thumb">${hlavni}
         <div class="badges">
           ${d.je_nova?'<span class="badge new">NOVÉ</span>':''}
           <span class="badge ${katClass}">${esc(d.kategorie)}</span>
         </div>
         <span class="src">${esc(d.zdroj)}</span>
+        ${pocetFotek}
       </div>
+      ${strip}
       <div class="body">
         <div class="title">${esc(d.nazev)}</div>
         <div class="loc">${esc(d.lokalita)}</div>
         <div class="dist">${dist}</div>
+        ${popis}
         <div class="price">${esc(d.cena_text||'')}</div>
       </div>
       <a class="open" href="${esc(d.url)}" target="_blank" rel="noopener">Otevřít inzerát →</a>`;

@@ -10,7 +10,7 @@ Nové nabídky od minule zvýrazní zeleným štítkem **NOVÉ**.
 
 ## Co hledá (výchozí nastavení)
 
-- **Domy** do **15 000 000 Kč**, jen v **dobrém stavu** — novostavba / projekt / po rekonstrukci
+- **Domy** do **15 000 000 Kč**, jen ve stavu: **velmi dobrý / dobrý / novostavba / po rekonstrukci**
 - **Pozemky** do **5 000 000 Kč**, jen **stavební** (pro bydlení / výstavbu)
 - V okruhu **+5 km** kolem obcí **Ostravice, Raškovice, Horní Domaslavice, Dolní Domaslavice**
 - Zdroje: **Sreality.cz, Bezrealitky.cz, Reality.iDNES.cz, Bazoš.cz**
