@@ -34,8 +34,25 @@ HTML_SABLONA = r"""<!DOCTYPE html>
   select,input{background:var(--panel2);border:1px solid var(--line);color:var(--text);
                border-radius:8px;padding:8px 10px;font-size:14px}
   .btn{background:var(--panel2);border:1px solid var(--line);color:var(--text);
-       border-radius:8px;padding:8px 12px;font-size:13px;cursor:pointer}
+       border-radius:8px;padding:8px 12px;font-size:13px;cursor:pointer;text-decoration:none;
+       display:inline-block}
   .btn:hover{border-color:var(--accent)}
+  .btn.primary{background:var(--accent);color:#04121f;border-color:var(--accent);font-weight:700}
+  .btn.disabled{opacity:.45;pointer-events:none}
+  .ask{width:100%;text-align:center;margin-top:2px}
+  /* Modal asistenta dotazů */
+  .modal{position:fixed;inset:0;background:#000a;z-index:2000;display:flex;
+         align-items:center;justify-content:center;padding:20px}
+  .modal-box{background:var(--panel);border:1px solid var(--line);border-radius:14px;
+             width:min(680px,100%);max-height:90vh;overflow:auto;padding:20px}
+  .modal-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+  .modal-head .x{cursor:pointer;font-size:18px;color:var(--muted)}
+  .mc{font-size:13px;color:var(--muted);margin-bottom:10px;line-height:1.6}
+  .mc b{color:var(--text)}
+  #modal-text{width:100%;min-height:230px;background:var(--panel2);border:1px solid var(--line);
+              color:var(--text);border-radius:8px;padding:12px;font-size:13px;line-height:1.5;
+              font-family:inherit;resize:vertical}
+  .modal-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
   #map{height:380px;margin:0;display:block;z-index:1}
   .leaflet-popup-content{font-size:13px}
   .leaflet-popup-content a{color:#0645ad;font-weight:600}
@@ -129,6 +146,20 @@ HTML_SABLONA = r"""<!DOCTYPE html>
 <div id="grid" class="grid"></div>
 <div id="empty" class="empty" style="display:none">Žádná nabídka neodpovídá filtru.</div>
 
+<div id="modal" class="modal" style="display:none">
+  <div class="modal-box">
+    <div class="modal-head"><b>✉ Napsat dotaz k inzerátu</b><span class="x" onclick="closeModal()">✕</span></div>
+    <div id="modal-contact" class="mc"></div>
+    <textarea id="modal-text" spellcheck="true"></textarea>
+    <div class="modal-actions">
+      <button class="btn primary" id="m-mail" onclick="sendMail()">✉ Otevřít v e-mailu</button>
+      <a class="btn" id="m-tel" href="#">📞 Zavolat</a>
+      <button class="btn" onclick="copyText(this)">⧉ Kopírovat text</button>
+      <a class="btn" id="m-listing" target="_blank" rel="noopener" href="#">Otevřít inzerát</a>
+    </div>
+  </div>
+</div>
+
 <footer>
   Data z veřejných realitních serverů. Oblíbené a „viděno" se ukládají jen ve tvém prohlížeči.
   Ceny a dostupnost ověřuj vždy přímo v inzerátu.
@@ -186,6 +217,80 @@ function toggleFav(id,btn){
   if(fFav.checked) render();
 }
 window.toggleFav=toggleFav; window.markSeen=markSeen;
+
+// --- Asistent dotazů (pošle uživatel sám: mailto / tel / kopírovat) ---
+const PODPIS = "S pozdravem\nLukáš Ryška";
+const byId={}; DATA.forEach(d=>byId[d.id]=d);
+let inquiryTel="";
+
+function buildInquiry(d){
+  const jePoz = d.kategorie==='Pozemek';
+  const f = d.fakta||{};
+  const q=[];
+  if(!d.voda) q.push('– Jaký je zdroj pitné vody (obecní vodovod / studna)?');
+  if(!f['kanalizace']) q.push('– Jak je řešena kanalizace (veřejná / jímka / ČOV)?');
+  if(!f['elektřina']) q.push('– Je zavedená elektřina (přípojka, 230/400 V)?');
+  if(jePoz){
+    q.push('– Je pozemek zasíťovaný a v územním plánu určený k zástavbě?');
+    q.push('– Jaký je stav a šíře přístupové komunikace?');
+  }else{
+    if(!f['plyn']) q.push('– Je zaveden plyn?');
+    if(!f['topení']) q.push('– Jaký je způsob vytápění a přibližné roční náklady?');
+    q.push('– V jakém je nemovitost technickém stavu (stáří, poslední rekonstrukce)?');
+  }
+  q.push('– Je uvedená cena ještě k jednání?');
+  q.push('– Jaký je právní stav (věcná břemena, zástavy, exekuce, LV)?');
+  q.push('– Bylo by možné domluvit osobní prohlídku? Kdy by se Vám to hodilo?');
+  const k=d.kontakt||{};
+  const osloveni = k.jmeno ? ('Dobrý den, '+k.jmeno+',') : 'Dobrý den,';
+  const body = osloveni+'\n\n'+
+    'zaujal mě Váš inzerát „'+d.nazev+'"'+(d.lokalita?(' ('+d.lokalita+')'):'')+
+    (d.cena_text?(', cena '+d.cena_text):'')+'.\n'+
+    'Rád bych se zeptal na několik věcí:\n\n'+q.join('\n')+'\n\n'+
+    'Odkaz na inzerát: '+d.url+'\n\nPředem děkuji za odpověď.\n'+PODPIS;
+  return {subject:'Dotaz k inzerátu: '+d.nazev, body};
+}
+
+function openInquiry(id){
+  const d=byId[id]; if(!d) return;
+  const {subject,body}=buildInquiry(d);
+  const k=d.kontakt||{};
+  document.getElementById('modal-text').value=body;
+  inquiryTel=k.telefon||"";
+  const mailBtn=document.getElementById('m-mail');
+  mailBtn.dataset.email=k.email||"";
+  mailBtn.dataset.subject=subject;
+  if(!k.email){mailBtn.classList.add('disabled');} else {mailBtn.classList.remove('disabled');}
+  const tel=document.getElementById('m-tel');
+  if(k.telefon){tel.href='tel:'+k.telefon.replace(/\s/g,'');tel.classList.remove('disabled');tel.textContent='📞 '+k.telefon;}
+  else{tel.href='#';tel.classList.add('disabled');tel.textContent='📞 Telefon není';}
+  document.getElementById('m-listing').href=d.url;
+  const parts=[];
+  if(k.firma) parts.push('<b>'+esc(k.firma)+'</b>');
+  if(k.jmeno) parts.push(esc(k.jmeno));
+  if(k.email) parts.push('✉ '+esc(k.email));
+  if(k.telefon) parts.push('📞 '+esc(k.telefon));
+  let info = parts.length?('Kontakt: '+parts.join(' · ')):'Kontakt není v datech — použij tlačítko „Otevřít inzerát" a formulář/telefon přímo na stránce.';
+  if(k.email===undefined||(!k.email&&(d.zdroj!=='Sreality'))) info+='<br>Tip: u tohoto zdroje se kontakt zobrazuje až v inzerátu — text můžeš zkopírovat a vložit do formuláře.';
+  document.getElementById('modal-contact').innerHTML=info;
+  document.getElementById('modal').style.display='flex';
+  markSeen(id);
+}
+function closeModal(){document.getElementById('modal').style.display='none';}
+function sendMail(){
+  const b=document.getElementById('m-mail');
+  const email=b.dataset.email||"";
+  if(!email){alert('E-mail není u tohoto inzerátu k dispozici. Zkopíruj text a použij formulář v inzerátu, nebo zavolej.');return;}
+  const subj=encodeURIComponent(b.dataset.subject||'Dotaz k inzerátu');
+  const body=encodeURIComponent(document.getElementById('modal-text').value);
+  window.location.href='mailto:'+email+'?subject='+subj+'&body='+body;
+}
+function copyText(btn){
+  const t=document.getElementById('modal-text').value;
+  navigator.clipboard.writeText(t).then(()=>{const o=btn.textContent;btn.textContent='✓ Zkopírováno';setTimeout(()=>btn.textContent=o,1500);});
+}
+document.getElementById('modal').addEventListener('click',e=>{if(e.target.id==='modal')closeModal();});
+window.openInquiry=openInquiry; window.closeModal=closeModal; window.sendMail=sendMail; window.copyText=copyText;
 
 function faktaChips(d){
   const chips=[];
@@ -269,6 +374,7 @@ function render(){
         ${faktaChips(d)}
         ${popisText(d)}
         <div class="price">${esc(d.cena_text||'')}</div>
+        <button class="btn ask" onclick="openInquiry('${d.id}')">✉ Napsat dotaz</button>
       </div>
       <a class="open" href="${esc(d.url)}" target="_blank" rel="noopener"
          onclick="markSeen('${d.id}');this.closest('.card').classList.add('visited')">Otevřít inzerát →</a>`;

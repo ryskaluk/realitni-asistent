@@ -97,6 +97,9 @@ MAX_CENA_POZEMEK = 5_000_000
 POZEMEK_JEN_STAVEBNI = True
 # Domy: brát jen v dobrém stavu — novostavba / projekt / po rekonstrukci.
 DUM_JEN_DOBRY_STAV = True
+# Vynechat chaty a chalupy (rekreační objekty) — bereme jen "opravdové" domy.
+VYNECHAT_CHATY = True
+DUM_VYNECHAT_KLICOVA = ["chat", "chalup", "rekreac"]  # kmeny (chata/chaty/chatka…), bez diakritiky
 
 # Klíčová slova pro zdroje BEZ strukturovaného filtru (Bazoš, iDNES)
 # a jako pojistka i jinde. Porovnává se bez diakritiky, malými písmeny.
@@ -268,6 +271,12 @@ def projde_kriterii(item):
         if SCRAPING_FILTR_MIRNY:
             return True
         return any(k in text for k in POZEMEK_MUSI_OBSAHOVAT)
+
+    if item.get("kategorie") == "Dům":
+        # Vynechat chaty/chalupy (platí i pro server-filtrované Sreality domy).
+        nazev_norm = _bez_diakritiky(item.get("nazev", ""))
+        if VYNECHAT_CHATY and any(k in nazev_norm for k in DUM_VYNECHAT_KLICOVA):
+            return False
 
     if item.get("kategorie") == "Dům" and DUM_JEN_DOBRY_STAV:
         if item.get("_server_filtered"):
@@ -444,8 +453,24 @@ def _extrahuj_detail(result):
         "garáž": ("ano" if result.get("garage") else "") if result.get("garage") is not None else "",
     }
     fakta = {k: v for k, v in fakta.items() if v not in ("", None)}
+    # Kontakt na makléře / majitele.
+    user = result.get("user") or {}
+    telefony = user.get("user_phones") or []
+    telefon = ""
+    if telefony and isinstance(telefony[0], dict):
+        telefon = telefony[0].get("phone", "") or ""
+    premise = result.get("premise") or {}
+    firma = ""
+    if isinstance(premise, dict):
+        firma = premise.get("name") or (premise.get("company") or {}).get("name", "") or ""
+    kontakt = {
+        "email": user.get("user_email", "") or "",
+        "telefon": telefon,
+        "jmeno": user.get("user_name", "") or "",
+        "firma": firma,
+    }
     return {"popis_text": (result.get("advert_description") or "").strip(),
-            "voda": voda, "fakta": fakta}
+            "voda": voda, "fakta": fakta, "kontakt": kontakt}
 
 
 def obohat_sreality_detaily(items):
@@ -466,10 +491,11 @@ def obohat_sreality_detaily(items):
             res = (r.json() or {}).get("result") or {}
             d = _extrahuj_detail(res)
         except Exception:
-            d = {"popis_text": "", "voda": "", "fakta": {}}
+            d = {"popis_text": "", "voda": "", "fakta": {}, "kontakt": {}}
         it["popis_text"] = d["popis_text"]
         it["voda"] = d["voda"]
         it["fakta"] = d["fakta"]
+        it["kontakt"] = d.get("kontakt", {})
         time.sleep(0.2)
 
 
@@ -798,6 +824,7 @@ def vygeneruj_dashboard(nabidky, nove_ids):
           "popis_text": n.get("popis_text", ""),
           "voda": n.get("voda", ""),
           "fakta": n.get("fakta", {}),
+          "kontakt": n.get("kontakt", {}),
           "mesto": n.get("mesto") or (n.get("lokalita", "").split(",")[0].strip())}
          for n in nabidky], ensure_ascii=False)
     obce_txt = ", ".join(o["nazev"] for o in OBCE)
@@ -806,6 +833,8 @@ def vygeneruj_dashboard(nabidky, nove_ids):
     kriteria.append("pozemky jen stavební" if POZEMEK_JEN_STAVEBNI else "pozemky všechny")
     kriteria.append("domy jen: velmi dobrý / dobrý / novostavba / po rekonstrukci"
                     if DUM_JEN_DOBRY_STAV else "domy všechny")
+    if VYNECHAT_CHATY:
+        kriteria.append("bez chat a chalup")
     kriteria_txt = "; ".join(kriteria)
 
     out = (HTML_SABLONA
