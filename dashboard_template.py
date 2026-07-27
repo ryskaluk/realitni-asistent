@@ -63,7 +63,7 @@ HTML_SABLONA = r"""<!DOCTYPE html>
   .card:hover{transform:translateY(-3px);border-color:var(--accent)}
   .card.visited{opacity:.62}
   .card.hl{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)}
-  .thumb{height:190px;background:#0c141c;position:relative;overflow:hidden}
+  .thumb{height:190px;background:#0c141c;position:relative;overflow:hidden;cursor:pointer}
   .thumb .main{width:100%;height:100%;object-fit:cover;display:block}
   .thumb .noimg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
                 color:var(--muted);font-size:13px}
@@ -209,6 +209,18 @@ function updateMap(list){
 }
 
 function markSeen(id){seenSet.add(id);save(LS_SEEN,seenSet);}
+function markSeenCard(el,id){
+  markSeen(id);
+  const c=el.closest('.card');
+  if(c && !c.classList.contains('visited')){
+    c.classList.add('visited');
+    const b=c.querySelector('.badges');
+    if(b && !b.querySelector('.badge.seen')){
+      const s=document.createElement('span');s.className='badge seen';s.textContent='✓ viděno';b.appendChild(s);
+    }
+  }
+}
+window.markSeenCard=markSeenCard;
 function toggleFav(id,btn){
   if(favSet.has(id)){favSet.delete(id);}else{favSet.add(id);}
   save(LS_FAV,favSet);
@@ -348,14 +360,14 @@ function render(){
       : `<div class="noimg">bez fotky</div>`;
     const pocetFotek=fotky.length>1?`<span class="count">📷 ${fotky.length}</span>`:'';
     const strip=fotky.length>1
-      ? `<div class="strip">${fotky.slice(0,8).map(u=>`<img src="${esc(u)}" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()" onclick="this.closest('.card').querySelector('.main').src=this.src;this.closest('.card').querySelector('.main').style.visibility='visible'">`).join('')}</div>`
+      ? `<div class="strip">${fotky.slice(0,8).map(u=>`<img src="${esc(u)}" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()" onclick="this.closest('.card').querySelector('.main').src=this.src;this.closest('.card').querySelector('.main').style.visibility='visible';markSeenCard(this,'${d.id}')">`).join('')}</div>`
       : '';
     const jeFav=favSet.has(d.id), jeSeen=seenSet.has(d.id);
     const card=document.createElement('div');
     card.className='card'+(jeSeen?' visited':'');
     card.dataset.id=d.id;
     card.innerHTML=`
-      <div class="thumb">${hlavni}
+      <div class="thumb" onclick="markSeenCard(this,'${d.id}')" title="Klikni na fotku — označí se jako prohlédnuté">${hlavni}
         <div class="badges">
           ${d.je_nova?'<span class="badge new">NOVÉ</span>':''}
           <span class="badge ${katClass}">${esc(d.kategorie)}</span>
@@ -364,7 +376,7 @@ function render(){
         <span class="src">${esc(d.zdroj)}</span>
         ${pocetFotek}
         <div class="fav ${jeFav?'on':''}" title="Uložit do oblíbených"
-             onclick="toggleFav('${d.id}',this)">${jeFav?'♥':'♡'}</div>
+             onclick="event.stopPropagation();toggleFav('${d.id}',this)">${jeFav?'♥':'♡'}</div>
       </div>
       ${strip}
       <div class="body">
