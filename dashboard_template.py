@@ -62,6 +62,8 @@ HTML_SABLONA = r"""<!DOCTYPE html>
         overflow:hidden;display:flex;flex-direction:column;transition:transform .12s,border-color .12s}
   .card:hover{transform:translateY(-3px);border-color:var(--accent)}
   .card.visited{opacity:.62}
+  .card.fav{border-color:var(--fav);box-shadow:0 0 0 2px var(--fav)}
+  .card.fav.visited{opacity:1}            /* oblíbené zůstanou svítivé i po prohlédnutí */
   .card.hl{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)}
   .thumb{height:190px;background:#0c141c;position:relative;overflow:hidden;cursor:pointer}
   .thumb .main{width:100%;height:100%;object-fit:cover;display:block}
@@ -73,6 +75,7 @@ HTML_SABLONA = r"""<!DOCTYPE html>
   .badge.kat-dum{background:var(--dum)}
   .badge.kat-pozemek{background:var(--pozemek)}
   .badge.seen{background:#7d8ea0;color:#08131d}
+  .badge.osloveno{background:var(--voda);color:#04121f}
   .src{position:absolute;top:10px;right:10px;font-size:11px;background:#04121fcc;
        border:1px solid var(--line);padding:3px 8px;border-radius:20px;color:var(--text)}
   .count{position:absolute;bottom:10px;right:10px;font-size:12px;background:#04121fcc;
@@ -116,6 +119,7 @@ HTML_SABLONA = r"""<!DOCTYPE html>
     <div class="stat"><b id="s-total">__POCET__</b><span>nabídek celkem</span></div>
     <div class="stat"><b id="s-new" style="color:var(--new)">__POCET_NOVYCH__</b><span>nových od minula</span></div>
     <div class="stat"><b id="s-fav" style="color:var(--fav)">0</b><span>oblíbených</span></div>
+    <div class="stat"><b id="s-contacted" style="color:var(--voda)">0</b><span>osloveno</span></div>
     <div class="stat"><b id="s-shown">0</b><span>zobrazeno</span></div>
   </div>
 </header>
@@ -169,10 +173,10 @@ HTML_SABLONA = r"""<!DOCTYPE html>
 const DATA = /*__DATA__*/;
 
 // --- Trvalé úložiště v prohlížeči (oblíbené + navštívené) ---
-const LS_FAV="ra_fav", LS_SEEN="ra_seen";
+const LS_FAV="ra_fav", LS_SEEN="ra_seen", LS_CONTACTED="ra_contacted";
 function load(k){try{return new Set(JSON.parse(localStorage.getItem(k)||"[]"));}catch(e){return new Set();}}
 function save(k,s){try{localStorage.setItem(k,JSON.stringify([...s]));}catch(e){}}
-let favSet=load(LS_FAV), seenSet=load(LS_SEEN);
+let favSet=load(LS_FAV), seenSet=load(LS_SEEN), contactedSet=load(LS_CONTACTED);
 
 const grid=document.getElementById('grid'), empty=document.getElementById('empty');
 const fKat=document.getElementById('f-kat'), fZdroj=document.getElementById('f-zdroj');
@@ -225,15 +229,31 @@ function toggleFav(id,btn){
   if(favSet.has(id)){favSet.delete(id);}else{favSet.add(id);}
   save(LS_FAV,favSet);
   document.getElementById('s-fav').textContent=favSet.size;
-  if(btn){btn.classList.toggle('on',favSet.has(id));btn.textContent=favSet.has(id)?'♥':'♡';}
+  if(btn){
+    btn.classList.toggle('on',favSet.has(id));
+    btn.textContent=favSet.has(id)?'♥':'♡';
+    const card=btn.closest('.card');
+    if(card) card.classList.toggle('fav',favSet.has(id));
+  }
   if(fFav.checked) render();
+}
+function markContacted(id){
+  contactedSet.add(id); save(LS_CONTACTED,contactedSet);
+  document.getElementById('s-contacted').textContent=contactedSet.size;
+  const c=[...document.querySelectorAll('.card')].find(x=>x.dataset.id===id);
+  if(c){c.classList.add('contacted');
+    const b=c.querySelector('.badges');
+    if(b && !b.querySelector('.badge.osloveno')){
+      const s=document.createElement('span');s.className='badge osloveno';s.textContent='✉ osloveno';b.prepend(s);
+    }
+  }
 }
 window.toggleFav=toggleFav; window.markSeen=markSeen;
 
 // --- Asistent dotazů (pošle uživatel sám: mailto / tel / kopírovat) ---
 const PODPIS = "S pozdravem\nLukáš Ryška";
 const byId={}; DATA.forEach(d=>byId[d.id]=d);
-let inquiryTel="";
+let inquiryTel="", currentInquiryId=null;
 
 function buildInquiry(d){
   const jePoz = d.kategorie==='Pozemek';
@@ -265,6 +285,7 @@ function buildInquiry(d){
 
 function openInquiry(id){
   const d=byId[id]; if(!d) return;
+  currentInquiryId=id;
   const {subject,body}=buildInquiry(d);
   const k=d.kontakt||{};
   document.getElementById('modal-text').value=body;
@@ -288,6 +309,16 @@ function openInquiry(id){
   document.getElementById('modal').style.display='flex';
   markSeen(id);
 }
+function openListing(e,id){
+  if(e) e.preventDefault();
+  const d=byId[id]; if(!d) return false;
+  markSeen(id);
+  const c=[...document.querySelectorAll('.card')].find(x=>x.dataset.id===id);
+  if(c) c.classList.add('visited');
+  window.open(d.url,'_blank','noopener');
+  return false;
+}
+window.openListing=openListing;
 function closeModal(){document.getElementById('modal').style.display='none';}
 function sendMail(){
   const b=document.getElementById('m-mail');
@@ -295,6 +326,7 @@ function sendMail(){
   if(!email){alert('E-mail není u tohoto inzerátu k dispozici. Zkopíruj text a použij formulář v inzerátu, nebo zavolej.');return;}
   const subj=encodeURIComponent(b.dataset.subject||'Dotaz k inzerátu');
   const body=encodeURIComponent(document.getElementById('modal-text').value);
+  if(currentInquiryId) markContacted(currentInquiryId);
   window.location.href='mailto:'+email+'?subject='+subj+'&body='+body;
 }
 function copyText(btn){
@@ -348,6 +380,7 @@ function render(){
 
   document.getElementById('s-shown').textContent=list.length;
   document.getElementById('s-fav').textContent=favSet.size;
+  document.getElementById('s-contacted').textContent=contactedSet.size;
   grid.innerHTML=''; empty.style.display=list.length?'none':'block';
 
   for(const d of list){
@@ -362,15 +395,16 @@ function render(){
     const strip=fotky.length>1
       ? `<div class="strip">${fotky.slice(0,8).map(u=>`<img src="${esc(u)}" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()" onclick="this.closest('.card').querySelector('.main').src=this.src;this.closest('.card').querySelector('.main').style.visibility='visible';markSeenCard(this,'${d.id}')">`).join('')}</div>`
       : '';
-    const jeFav=favSet.has(d.id), jeSeen=seenSet.has(d.id);
+    const jeFav=favSet.has(d.id), jeSeen=seenSet.has(d.id), jeOsl=contactedSet.has(d.id);
     const card=document.createElement('div');
-    card.className='card'+(jeSeen?' visited':'');
+    card.className='card'+(jeSeen?' visited':'')+(jeFav?' fav':'')+(jeOsl?' contacted':'');
     card.dataset.id=d.id;
     card.innerHTML=`
       <div class="thumb" onclick="markSeenCard(this,'${d.id}')" title="Klikni na fotku — označí se jako prohlédnuté">${hlavni}
         <div class="badges">
           ${d.je_nova?'<span class="badge new">NOVÉ</span>':''}
           <span class="badge ${katClass}">${esc(d.kategorie)}</span>
+          ${jeOsl?'<span class="badge osloveno">✉ osloveno</span>':''}
           ${jeSeen?'<span class="badge seen">✓ viděno</span>':''}
         </div>
         <span class="src">${esc(d.zdroj)}</span>
@@ -388,8 +422,8 @@ function render(){
         <div class="price">${esc(d.cena_text||'')}</div>
         <button class="btn ask" onclick="openInquiry('${d.id}')">✉ Napsat dotaz</button>
       </div>
-      <a class="open" href="${esc(d.url)}" target="_blank" rel="noopener"
-         onclick="markSeen('${d.id}');this.closest('.card').classList.add('visited')">Otevřít inzerát →</a>`;
+      <a class="open" href="${esc(d.url)}" target="_blank" rel="noopener noreferrer"
+         onclick="return openListing(event,'${d.id}')">Otevřít inzerát →</a>`;
     grid.appendChild(card);
   }
   updateMap(list);
