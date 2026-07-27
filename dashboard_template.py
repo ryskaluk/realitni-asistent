@@ -7,11 +7,13 @@ HTML_SABLONA = r"""<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Realitní asistent — domy a pozemky</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <style>
   :root{
     --bg:#0f1720; --panel:#17212b; --panel2:#1e2b38; --line:#2b3a4a;
     --text:#e6edf3; --muted:#8fa3b8; --accent:#4aa8ff; --new:#2ecc71;
-    --dum:#4aa8ff; --pozemek:#f1c40f;
+    --dum:#4aa8ff; --pozemek:#f1c40f; --fav:#ff5a7a; --voda:#3ad0c9;
   }
   *{box-sizing:border-box}
   body{margin:0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
@@ -22,43 +24,61 @@ HTML_SABLONA = r"""<!DOCTYPE html>
   .meta{color:var(--muted);font-size:13px;line-height:1.6}
   .stats{display:flex;gap:14px;flex-wrap:wrap;margin-top:14px}
   .stat{background:var(--panel);border:1px solid var(--line);border-radius:10px;
-        padding:10px 16px;min-width:110px}
+        padding:10px 16px;min-width:100px}
   .stat b{display:block;font-size:24px}
   .stat span{color:var(--muted);font-size:12px}
   .controls{display:flex;gap:12px;flex-wrap:wrap;align-items:center;
-            padding:16px 26px;border-bottom:1px solid var(--line);background:var(--panel);
-            position:sticky;top:0;z-index:5}
+            padding:14px 26px;border-bottom:1px solid var(--line);background:var(--panel);
+            position:sticky;top:0;z-index:500}
   .controls label{font-size:12px;color:var(--muted);margin-right:6px}
   select,input{background:var(--panel2);border:1px solid var(--line);color:var(--text);
                border-radius:8px;padding:8px 10px;font-size:14px}
-  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));
+  .btn{background:var(--panel2);border:1px solid var(--line);color:var(--text);
+       border-radius:8px;padding:8px 12px;font-size:13px;cursor:pointer}
+  .btn:hover{border-color:var(--accent)}
+  #map{height:380px;margin:0;display:block;z-index:1}
+  .leaflet-popup-content{font-size:13px}
+  .leaflet-popup-content a{color:#0645ad;font-weight:600}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));
         gap:18px;padding:24px 26px}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;
         overflow:hidden;display:flex;flex-direction:column;transition:transform .12s,border-color .12s}
   .card:hover{transform:translateY(-3px);border-color:var(--accent)}
+  .card.visited{opacity:.62}
+  .card.hl{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)}
   .thumb{height:190px;background:#0c141c;position:relative;overflow:hidden}
   .thumb .main{width:100%;height:100%;object-fit:cover;display:block}
   .thumb .noimg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
                 color:var(--muted);font-size:13px}
-  .count{position:absolute;bottom:10px;right:10px;font-size:12px;background:#04121fcc;
-         border:1px solid var(--line);padding:2px 8px;border-radius:20px;color:var(--text)}
-  .strip{display:flex;gap:4px;padding:4px;background:var(--panel);overflow-x:auto}
-  .strip img{width:52px;height:40px;object-fit:cover;border-radius:4px;cursor:pointer;
-             flex:0 0 auto;opacity:.75;transition:opacity .1s}
-  .strip img:hover{opacity:1;outline:2px solid var(--accent)}
-  .desc{font-size:12px;color:var(--muted);line-height:1.5}
-  .badges{position:absolute;top:10px;left:10px;display:flex;gap:6px}
+  .badges{position:absolute;top:10px;left:10px;display:flex;gap:6px;flex-wrap:wrap}
   .badge{font-size:11px;font-weight:700;padding:3px 8px;border-radius:20px;color:#04121f}
   .badge.new{background:var(--new);color:#052}
   .badge.kat-dum{background:var(--dum)}
   .badge.kat-pozemek{background:var(--pozemek)}
+  .badge.seen{background:#7d8ea0;color:#08131d}
   .src{position:absolute;top:10px;right:10px;font-size:11px;background:#04121fcc;
        border:1px solid var(--line);padding:3px 8px;border-radius:20px;color:var(--text)}
+  .count{position:absolute;bottom:10px;right:10px;font-size:12px;background:#04121fcc;
+         border:1px solid var(--line);padding:2px 8px;border-radius:20px;color:var(--text)}
+  .fav{position:absolute;bottom:10px;left:10px;font-size:18px;line-height:1;cursor:pointer;
+       background:#04121fcc;border:1px solid var(--line);border-radius:50%;
+       width:34px;height:34px;display:flex;align-items:center;justify-content:center;color:#fff}
+  .fav.on{color:var(--fav);border-color:var(--fav)}
+  .strip{display:flex;gap:4px;padding:4px;background:var(--panel);overflow-x:auto}
+  .strip img{width:52px;height:40px;object-fit:cover;border-radius:4px;cursor:pointer;
+             flex:0 0 auto;opacity:.75;transition:opacity .1s}
+  .strip img:hover{opacity:1;outline:2px solid var(--accent)}
   .body{padding:14px 16px;display:flex;flex-direction:column;gap:8px;flex:1}
   .title{font-size:15px;font-weight:600;line-height:1.35}
   .loc{color:var(--muted);font-size:13px}
-  .price{font-size:19px;font-weight:800;color:var(--accent);margin-top:auto}
   .dist{font-size:12px;color:var(--muted)}
+  .chips{display:flex;flex-wrap:wrap;gap:5px;margin:2px 0}
+  .chip{font-size:11px;background:var(--panel2);border:1px solid var(--line);
+        border-radius:6px;padding:2px 7px;color:var(--text)}
+  .chip.voda{background:#0c2f2d;border-color:var(--voda);color:var(--voda);font-weight:600}
+  .txt{font-size:12.5px;color:#c3d0dd;line-height:1.5}
+  .txt .more{color:var(--accent);cursor:pointer;font-weight:600}
+  .price{font-size:19px;font-weight:800;color:var(--accent);margin-top:auto}
   a.open{display:block;text-align:center;padding:11px;background:var(--panel2);
          border-top:1px solid var(--line);color:var(--accent);text-decoration:none;font-weight:600}
   a.open:hover{background:#24384a}
@@ -78,6 +98,7 @@ HTML_SABLONA = r"""<!DOCTYPE html>
   <div class="stats">
     <div class="stat"><b id="s-total">__POCET__</b><span>nabídek celkem</span></div>
     <div class="stat"><b id="s-new" style="color:var(--new)">__POCET_NOVYCH__</b><span>nových od minula</span></div>
+    <div class="stat"><b id="s-fav" style="color:var(--fav)">0</b><span>oblíbených</span></div>
     <div class="stat"><b id="s-shown">0</b><span>zobrazeno</span></div>
   </div>
 </header>
@@ -87,6 +108,8 @@ HTML_SABLONA = r"""<!DOCTYPE html>
     <select id="f-kat"><option value="">Vše</option><option>Dům</option><option>Pozemek</option></select></div>
   <div><label>Zdroj</label>
     <select id="f-zdroj"><option value="">Vše</option></select></div>
+  <div><label>Město</label>
+    <select id="f-mesto"><option value="">Vše</option></select></div>
   <div><label>Řadit</label>
     <select id="f-sort">
       <option value="dist">Nejblíž obcím</option>
@@ -95,43 +118,107 @@ HTML_SABLONA = r"""<!DOCTYPE html>
       <option value="new">Nové první</option>
     </select></div>
   <div><label><input type="checkbox" id="f-new"> jen nové</label></div>
+  <div><label><input type="checkbox" id="f-fav"> jen oblíbené</label></div>
+  <button class="btn" id="toggle-map">Skrýt mapu</button>
   <div style="flex:1"></div>
-  <input id="f-text" placeholder="Hledat v názvu / lokalitě…" style="min-width:220px">
+  <input id="f-text" placeholder="Hledat v názvu / lokalitě / popisu…" style="min-width:240px">
 </div>
+
+<div id="map"></div>
 
 <div id="grid" class="grid"></div>
 <div id="empty" class="empty" style="display:none">Žádná nabídka neodpovídá filtru.</div>
 
 <footer>
-  Data z veřejných realitních serverů. Skript běží lokálně u tebe; dashboard se obnoví
-  po každém spuštění <code>hledej.py</code>. Ceny a dostupnost ověřuj vždy přímo v inzerátu.
+  Data z veřejných realitních serverů. Oblíbené a „viděno" se ukládají jen ve tvém prohlížeči.
+  Ceny a dostupnost ověřuj vždy přímo v inzerátu.
 </footer>
 
 <script>
 const DATA = /*__DATA__*/;
 
-const grid = document.getElementById('grid');
-const empty = document.getElementById('empty');
-const fKat = document.getElementById('f-kat');
-const fZdroj = document.getElementById('f-zdroj');
-const fSort = document.getElementById('f-sort');
-const fNew = document.getElementById('f-new');
-const fText = document.getElementById('f-text');
+// --- Trvalé úložiště v prohlížeči (oblíbené + navštívené) ---
+const LS_FAV="ra_fav", LS_SEEN="ra_seen";
+function load(k){try{return new Set(JSON.parse(localStorage.getItem(k)||"[]"));}catch(e){return new Set();}}
+function save(k,s){try{localStorage.setItem(k,JSON.stringify([...s]));}catch(e){}}
+let favSet=load(LS_FAV), seenSet=load(LS_SEEN);
 
-// Naplnit filtr zdrojů.
-[...new Set(DATA.map(d=>d.zdroj))].sort().forEach(z=>{
-  const o=document.createElement('option');o.textContent=z;fZdroj.appendChild(o);
-});
+const grid=document.getElementById('grid'), empty=document.getElementById('empty');
+const fKat=document.getElementById('f-kat'), fZdroj=document.getElementById('f-zdroj');
+const fMesto=document.getElementById('f-mesto'), fSort=document.getElementById('f-sort');
+const fNew=document.getElementById('f-new'), fFav=document.getElementById('f-fav');
+const fText=document.getElementById('f-text');
+
+// Naplnit filtry zdrojů a měst z dat.
+[...new Set(DATA.map(d=>d.zdroj))].sort().forEach(z=>{const o=document.createElement('option');o.textContent=z;fZdroj.appendChild(o);});
+[...new Set(DATA.map(d=>(d.mesto||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'cs')).forEach(m=>{const o=document.createElement('option');o.textContent=m;fMesto.appendChild(o);});
 
 function esc(s){return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 
+// --- Mapa (Leaflet) ---
+let map, markerLayer;
+function initMap(){
+  map=L.map('map',{scrollWheelZoom:false}).setView([49.62,18.44],11);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    {maxZoom:19, attribution:'© OpenStreetMap'}).addTo(map);
+  markerLayer=L.layerGroup().addTo(map);
+}
+function updateMap(list){
+  if(!map) return;
+  markerLayer.clearLayers();
+  const pts=[];
+  list.forEach(d=>{
+    if(d.lat==null||d.lon==null) return;
+    const m=L.marker([d.lat,d.lon]).addTo(markerLayer);
+    m.bindPopup(`<b>${esc(d.nazev)}</b><br>${esc(d.cena_text||'')}<br>`+
+      `<a href="${esc(d.url)}" target="_blank" rel="noopener">Otevřít inzerát →</a>`);
+    pts.push([d.lat,d.lon]);
+  });
+  if(pts.length){try{map.fitBounds(pts,{padding:[30,30],maxZoom:13});}catch(e){}}
+}
+
+function markSeen(id){seenSet.add(id);save(LS_SEEN,seenSet);}
+function toggleFav(id,btn){
+  if(favSet.has(id)){favSet.delete(id);}else{favSet.add(id);}
+  save(LS_FAV,favSet);
+  document.getElementById('s-fav').textContent=favSet.size;
+  if(btn){btn.classList.toggle('on',favSet.has(id));btn.textContent=favSet.has(id)?'♥':'♡';}
+  if(fFav.checked) render();
+}
+window.toggleFav=toggleFav; window.markSeen=markSeen;
+
+function faktaChips(d){
+  const chips=[];
+  if(d.voda) chips.push(`<span class="chip voda">💧 ${esc(d.voda)}</span>`);
+  const f=d.fakta||{};
+  for(const k in f){
+    if(k==='voda') continue;
+    chips.push(`<span class="chip">${esc(k)}: ${esc(String(f[k]))}</span>`);
+  }
+  return chips.length?`<div class="chips">${chips.join('')}</div>`:'';
+}
+
+function popisText(d){
+  const t=(d.popis_text||'').trim();
+  if(!t){ return d.popis?`<div class="txt">${esc(d.popis)}</div>`:''; }
+  const lim=170;
+  if(t.length<=lim) return `<div class="txt">${esc(t)}${d.popis?' · '+esc(d.popis):''}</div>`;
+  const kratky=esc(t.slice(0,lim))+'… ';
+  const plny=esc(t);
+  return `<div class="txt"><span class="short">${kratky}<span class="more" onclick="this.parentNode.parentNode.innerHTML='&#8203;'+this.dataset.f" data-f="${plny}">více</span></span></div>`;
+}
+
 function render(){
-  const kat=fKat.value, zdroj=fZdroj.value, q=fText.value.trim().toLowerCase(), jenNove=fNew.checked;
+  const kat=fKat.value, zdroj=fZdroj.value, mesto=fMesto.value,
+        q=fText.value.trim().toLowerCase(), jenNove=fNew.checked, jenFav=fFav.checked;
   let list=DATA.filter(d=>{
     if(kat && d.kategorie!==kat) return false;
     if(zdroj && d.zdroj!==zdroj) return false;
+    if(mesto && (d.mesto||'')!==mesto) return false;
     if(jenNove && !d.je_nova) return false;
-    if(q && !((d.nazev||'').toLowerCase().includes(q) || (d.lokalita||'').toLowerCase().includes(q))) return false;
+    if(jenFav && !favSet.has(d.id)) return false;
+    if(q){const h=((d.nazev||'')+' '+(d.lokalita||'')+' '+(d.popis_text||'')).toLowerCase();
+          if(!h.includes(q)) return false;}
     return true;
   });
   const s=fSort.value;
@@ -143,48 +230,64 @@ function render(){
   });
 
   document.getElementById('s-shown').textContent=list.length;
-  grid.innerHTML='';
-  empty.style.display=list.length?'none':'block';
+  document.getElementById('s-fav').textContent=favSet.size;
+  grid.innerHTML=''; empty.style.display=list.length?'none':'block';
 
   for(const d of list){
-    const katClass = d.kategorie==='Dům'?'kat-dum':'kat-pozemek';
-    const dist = (d.vzdalenost_km!=null) ? `${d.vzdalenost_km} km od: ${esc(d.nejblizsi_obec||'')}`
-                                         : (d.nejblizsi_obec?`obec: ${esc(d.nejblizsi_obec)}`:'');
-    const fotky = (d.obrazky && d.obrazky.length) ? d.obrazky : (d.obrazek ? [d.obrazek] : []);
-    const hlavni = fotky.length
+    const katClass=d.kategorie==='Dům'?'kat-dum':'kat-pozemek';
+    const dist=(d.vzdalenost_km!=null)?`${d.vzdalenost_km} km od: ${esc(d.nejblizsi_obec||'')}`
+                                       :(d.nejblizsi_obec?`obec: ${esc(d.nejblizsi_obec)}`:'');
+    const fotky=(d.obrazky&&d.obrazky.length)?d.obrazky:(d.obrazek?[d.obrazek]:[]);
+    const hlavni=fotky.length
       ? `<img class="main" src="${esc(fotky[0])}" loading="lazy" referrerpolicy="no-referrer" onerror="this.style.visibility='hidden'">`
       : `<div class="noimg">bez fotky</div>`;
-    const pocetFotek = fotky.length>1 ? `<span class="count">📷 ${fotky.length}</span>` : '';
-    // Pásek náhledů (max 6) — kliknutím se přepne hlavní fotka.
-    const strip = fotky.length>1
-      ? `<div class="strip">${fotky.slice(0,6).map(u=>`<img src="${esc(u)}" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()" onclick="this.closest('.card').querySelector('.main').src=this.src">`).join('')}</div>`
+    const pocetFotek=fotky.length>1?`<span class="count">📷 ${fotky.length}</span>`:'';
+    const strip=fotky.length>1
+      ? `<div class="strip">${fotky.slice(0,8).map(u=>`<img src="${esc(u)}" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()" onclick="this.closest('.card').querySelector('.main').src=this.src;this.closest('.card').querySelector('.main').style.visibility='visible'">`).join('')}</div>`
       : '';
-    const popis = d.popis ? `<div class="desc">${esc(d.popis)}</div>` : '';
+    const jeFav=favSet.has(d.id), jeSeen=seenSet.has(d.id);
     const card=document.createElement('div');
-    card.className='card';
+    card.className='card'+(jeSeen?' visited':'');
+    card.dataset.id=d.id;
     card.innerHTML=`
       <div class="thumb">${hlavni}
         <div class="badges">
           ${d.je_nova?'<span class="badge new">NOVÉ</span>':''}
           <span class="badge ${katClass}">${esc(d.kategorie)}</span>
+          ${jeSeen?'<span class="badge seen">✓ viděno</span>':''}
         </div>
         <span class="src">${esc(d.zdroj)}</span>
         ${pocetFotek}
+        <div class="fav ${jeFav?'on':''}" title="Uložit do oblíbených"
+             onclick="toggleFav('${d.id}',this)">${jeFav?'♥':'♡'}</div>
       </div>
       ${strip}
       <div class="body">
         <div class="title">${esc(d.nazev)}</div>
         <div class="loc">${esc(d.lokalita)}</div>
         <div class="dist">${dist}</div>
-        ${popis}
+        ${faktaChips(d)}
+        ${popisText(d)}
         <div class="price">${esc(d.cena_text||'')}</div>
       </div>
-      <a class="open" href="${esc(d.url)}" target="_blank" rel="noopener">Otevřít inzerát →</a>`;
+      <a class="open" href="${esc(d.url)}" target="_blank" rel="noopener"
+         onclick="markSeen('${d.id}');this.closest('.card').classList.add('visited')">Otevřít inzerát →</a>`;
     grid.appendChild(card);
   }
+  updateMap(list);
 }
 
-[fKat,fZdroj,fSort,fNew,fText].forEach(el=>el.addEventListener('input',render));
+// Přepínač mapy
+document.getElementById('toggle-map').addEventListener('click',function(){
+  const m=document.getElementById('map');
+  const skryto=m.style.display==='none';
+  m.style.display=skryto?'block':'none';
+  this.textContent=skryto?'Skrýt mapu':'Zobrazit mapu';
+  if(skryto&&map){setTimeout(()=>map.invalidateSize(),50);render();}
+});
+
+[fKat,fZdroj,fMesto,fSort,fNew,fFav,fText].forEach(el=>el.addEventListener('input',render));
+initMap();
 render();
 </script>
 </body>

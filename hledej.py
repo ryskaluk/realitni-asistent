@@ -146,6 +146,10 @@ SREALITY_LOCALITY_ID = ""
 BAZOS_PSC = ["73914", "73904", "73951", "73938"]  # Ostravice, Raškovice, H./D. Domaslavice
 BAZOS_OKRUH_KM = 10
 
+# Stahovat detail každého Sreality inzerátu (popisný text, voda, sítě, plochy)?
+# Je to pomalejší (dotaz na každý inzerát), ale karty pak mají popis a vodovod.
+SREALITY_DETAILY = True
+
 # Podrobný výpis do logu (užitečné pro ladění v GitHub Actions).
 VERBOSE = True
 # --------------------------------------------------------------------------
@@ -396,6 +400,8 @@ def zdroj_sreality():
                     "max_cena": _max,
                     "lat": loc.get("gps_lat"), "lon": loc.get("gps_lon"),
                     "url": url, "obrazek": img,
+                    "obrazky": obrazky, "popis": popis,
+                    "mesto": loc.get("city") or loc.get("municipality") or "",
                     # Domy: stav vyřešil server. Pozemky: "stavební" dořeší textový filtr.
                     "_server_filtered": (cmc == 2),
                 })
@@ -407,6 +413,64 @@ def zdroj_sreality():
         if VERBOSE:
             print(f"  Sreality {kat_nazev}: staženo {pocet_kat} inzerátů (v oblasti)")
     return out
+
+
+def _nazvy(hodnota):
+    """Ze Sreality pole/objektu {name,value} vytáhne čitelný text názvů."""
+    if isinstance(hodnota, list):
+        return ", ".join(x.get("name", "") for x in hodnota
+                         if isinstance(x, dict) and x.get("name"))
+    if isinstance(hodnota, dict):
+        return hodnota.get("name", "")
+    return ""
+
+
+def _extrahuj_detail(result):
+    """Z detailu Sreality inzerátu vytáhne popis, vodu, sítě a plochy."""
+    voda = _nazvy(result.get("water_set"))
+    fakta = {
+        "voda": voda,
+        "kanalizace": _nazvy(result.get("gully_set")),
+        "elektřina": _nazvy(result.get("electricity_set")),
+        "plyn": _nazvy(result.get("gas_set")),
+        "topení": _nazvy(result.get("heating_set")),
+        "stavba": _nazvy(result.get("building_type")),
+        "energetická třída": _nazvy(result.get("energy_efficiency_rating_cb")),
+        "plocha budovy": (f"{result.get('building_area')} m²"
+                          if result.get("building_area") else ""),
+        "plocha pozemku": (f"{result.get('estate_area')} m²"
+                           if result.get("estate_area") else ""),
+        "podlaží": result.get("floors") or "",
+        "garáž": ("ano" if result.get("garage") else "") if result.get("garage") is not None else "",
+    }
+    fakta = {k: v for k, v in fakta.items() if v not in ("", None)}
+    return {"popis_text": (result.get("advert_description") or "").strip(),
+            "voda": voda, "fakta": fakta}
+
+
+def obohat_sreality_detaily(items):
+    """Pro Sreality inzeráty (jen ty finální) dotáhne detail: text, vodu, sítě."""
+    if not SREALITY_DETAILY or requests is None:
+        return
+    sr = [it for it in items if str(it.get("id", "")).startswith("sreality-")]
+    if not sr:
+        return
+    if VERBOSE:
+        print(f"Stahuji detaily {len(sr)} Sreality inzerátů (popis, voda, sítě)...")
+    session = _sreality_session()
+    for it in sr:
+        hid = str(it["id"]).split("sreality-")[-1]
+        try:
+            r = session.get(f"https://www.sreality.cz/api/v1/estates/{hid}?lang=cs", timeout=30)
+            r.raise_for_status()
+            res = (r.json() or {}).get("result") or {}
+            d = _extrahuj_detail(res)
+        except Exception:
+            d = {"popis_text": "", "voda": "", "fakta": {}}
+        it["popis_text"] = d["popis_text"]
+        it["voda"] = d["voda"]
+        it["fakta"] = d["fakta"]
+        time.sleep(0.2)
 
 
 # =========================================================================
@@ -689,6 +753,13 @@ def najdi_nemovitosti(demo=False):
         print(f"--- Vyřazeno: cena={stat['cena']}, kritéria={stat['kriteria']}, "
               f"lokalita={stat['lokalita']} | prošlo={stat['prohlo']} ---\n")
 
+    # Dotáhnout popis, vodu a sítě z detailu (jen finální Sreality inzeráty).
+    if not demo:
+        try:
+            obohat_sreality_detaily(vyhovujici)
+        except Exception as e:
+            print(f"  ! Obohacení detailů selhalo: {e}")
+
     vyhovujici.sort(key=lambda x: (x.get("vzdalenost_km") if x.get("vzdalenost_km") is not None else 999,
                                    x.get("cena") or 0))
     return vyhovujici
@@ -723,7 +794,11 @@ def vygeneruj_dashboard(nabidky, nove_ids):
     data_json = json.dumps(
         [{**n, "je_nova": n["id"] in nove_ids, "cena_text": format_cena(n["cena"]),
           "obrazky": n.get("obrazky") or ([n["obrazek"]] if n.get("obrazek") else []),
-          "popis": n.get("popis", "")}
+          "popis": n.get("popis", ""),
+          "popis_text": n.get("popis_text", ""),
+          "voda": n.get("voda", ""),
+          "fakta": n.get("fakta", {}),
+          "mesto": n.get("mesto") or (n.get("lokalita", "").split(",")[0].strip())}
          for n in nabidky], ensure_ascii=False)
     obce_txt = ", ".join(o["nazev"] for o in OBCE)
     zdroje_txt = ", ".join(k for k, v in ZDROJE_ZAPNUTE.items() if v)
